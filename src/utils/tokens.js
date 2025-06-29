@@ -37,27 +37,49 @@ export const TOKENS = {
   }
 };
 
-// Mock price data (in production, this would come from price feeds)
-export const getTokenPrice = (symbol) => {
-  const prices = {
-    BLEND: 0.15,
-    XLM: 0.12,
-    USDC: 1.00,
-    BTC: 45000
-  };
-  return prices[symbol] || 0;
+import { getAssetPrice, RPC_URL } from './contract';
+import * as SorobanClient from 'soroban-client';
+
+export const getTokenPrice = async (symbol) => {
+  const token = TOKENS[symbol];
+  if (!token) return 0;
+  try {
+    const price = await getAssetPrice(token.address);
+    return Number(price) || 0;
+  } catch {
+    return 0;
+  }
 };
 
-// Mock balance data (in production, this would come from blockchain)
 export const getTokenBalance = async (address, tokenSymbol) => {
-  // Placeholder for balance fetching
-  const mockBalances = {
-    BLEND: 1000,
-    XLM: 500,
-    USDC: 250,
-    BTC: 0.01
-  };
-  return mockBalances[tokenSymbol] || 0;
+  const token = TOKENS[tokenSymbol];
+  if (!token || !address) return 0;
+
+  // If XLM, fetch native balance
+  if (tokenSymbol === 'XLM') {
+    try {
+      const server = new SorobanClient.Server(RPC_URL, { allowHttp: true });
+      const account = await server.getAccount(address);
+      const xlmBalance = account.balances.find(b => b.asset_type === 'native');
+      return xlmBalance ? parseFloat(xlmBalance.balance) : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  // For contract tokens, call the token contract's balance method
+  try {
+    const server = new SorobanClient.Server(RPC_URL, { allowHttp: true });
+    const result = await server.callContract({
+      contractAddress: token.address,
+      functionName: 'balance',
+      args: [address]
+    });
+    // Assume result is a string or number
+    return Number(result) || 0;
+  } catch {
+    return 0;
+  }
 };
 
 // Get all token balances for an address

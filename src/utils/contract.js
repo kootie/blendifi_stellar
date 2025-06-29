@@ -1,4 +1,4 @@
-import SorobanClient from 'soroban-client';
+import * as SorobanClient from 'soroban-client';
 
 // Contract configuration for Blendifi DeFi MVP
 export const CONTRACT_ADDRESS = 'CA26SDP73CGMH5E5HHTHT3DN4YPH4DJUNRBRHPB4ZJTF2DQXDMCXXTZH';
@@ -12,12 +12,11 @@ export const stellarConfig = {
   passphrase: NETWORK_PASSPHRASE
 };
 
-// Real staking function using Soroban contract and Freighter
-export async function stakeBlend(amount, userAddress) {
+// Generic contract call utility
+export async function contractCall(functionName, params, userAddress) {
   const server = new SorobanClient.Server(RPC_URL, { allowHttp: true });
   const account = await server.getAccount(userAddress);
 
-  // Prepare contract invocation
   const tx = new SorobanClient.TransactionBuilder(account, {
     fee: '100',
     networkPassphrase: NETWORK_PASSPHRASE,
@@ -26,53 +25,28 @@ export async function stakeBlend(amount, userAddress) {
       function: {
         type: 'invokeContract',
         contractAddress: CONTRACT_ADDRESS,
-        functionName: 'stake_blend',
-        args: [userAddress, amount]
+        functionName,
+        args: [params]
       }
     }))
     .setTimeout(30)
     .build();
 
-  // Sign with Freighter
   const signedXDR = await window.freighter.signTransaction(tx.toXDR(), {
     network: 'TESTNET'
   });
 
-  // Submit
   const result = await server.sendTransaction(SorobanClient.TransactionBuilder.fromXDR(signedXDR, NETWORK_PASSPHRASE));
   return result;
 }
 
-// Real swap function using Soroban contract
-export async function swapTokens(tokenIn, tokenOut, amountIn, minAmountOut, userAddress) {
-  const server = new SorobanClient.Server(RPC_URL, { allowHttp: true });
-  const account = await server.getAccount(userAddress);
-  const deadline = Math.floor(Date.now() / 1000) + 300; // 5 minutes from now
-
-  // Prepare contract invocation
-  const tx = new SorobanClient.TransactionBuilder(account, {
-    fee: '100',
-    networkPassphrase: NETWORK_PASSPHRASE,
-  })
-    .addOperation(SorobanClient.Operation.invokeHostFunction({
-      function: {
-        type: 'invokeContract',
-        contractAddress: CONTRACT_ADDRESS,
-        functionName: 'swap_tokens',
-        args: [userAddress, tokenIn, tokenOut, amountIn, minAmountOut, deadline]
-      }
-    }))
-    .setTimeout(30)
-    .build();
-
-  // Sign with Freighter
-  const signedXDR = await window.freighter.signTransaction(tx.toXDR(), {
-    network: 'TESTNET'
-  });
-
-  // Submit
-  const result = await server.sendTransaction(SorobanClient.TransactionBuilder.fromXDR(signedXDR, NETWORK_PASSPHRASE));
-  return result;
+// Updated stakeBlend using contractCall
+export async function stakeBlend(userAddress, amount) {
+  const params = {
+    user: userAddress,
+    amount: amount // should be u128 (string or BigInt)
+  };
+  return await contractCall('stake_blend', params, userAddress);
 }
 
 // Real borrow function using Soroban contract
@@ -206,4 +180,51 @@ export const submitTransaction = async (signedTransaction) => {
   // This would submit to the Stellar network
   console.log('Submitting transaction:', signedTransaction);
   return { success: true, hash: 'mock_hash_' + Date.now() };
-}; 
+};
+
+// Supply to Blend (Lending)
+export async function supplyToBlend(userAddress, assetAddress, amount, asCollateral) {
+  const params = {
+    user: userAddress,
+    asset: assetAddress,
+    amount: amount, // u128
+    as_collateral: asCollateral // boolean
+  };
+  return await contractCall('supply_to_blend', params, userAddress);
+}
+
+// Borrow from Blend
+export async function borrowFromBlend(userAddress, assetAddress, amount) {
+  const params = {
+    user: userAddress,
+    asset: assetAddress,
+    amount: amount // u128
+  };
+  return await contractCall('borrow_from_blend', params, userAddress);
+}
+
+// Token Swap
+export async function swapTokens(userAddress, tokenIn, tokenOut, amountIn, minAmountOut, deadline) {
+  const params = {
+    user: userAddress,
+    token_in: tokenIn,
+    token_out: tokenOut,
+    amount_in: amountIn, // u128
+    min_amount_out: minAmountOut, // u128
+    deadline: deadline // u64
+  };
+  return await contractCall('swap_tokens', params, userAddress);
+}
+
+export async function claimRewards(userAddress) {
+  const params = { user: userAddress };
+  return await contractCall('claim_rewards', params, userAddress);
+}
+
+export async function unstakeBlend(userAddress, amount) {
+  const params = {
+    user: userAddress,
+    amount: amount // u128
+  };
+  return await contractCall('unstake_blend', params, userAddress);
+} 

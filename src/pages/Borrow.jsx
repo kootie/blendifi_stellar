@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useFreighter } from '../hooks/useFreighter';
 import { TOKENS, getTokenBalance, getTokenPrice } from '../utils/tokens';
-import { borrowAsset } from '../utils/contract';
+import { borrowFromBlend, supplyToBlend } from '../utils/contract';
+
+function toContractAmount(amount, decimals) {
+  return BigInt(Math.floor(parseFloat(amount) * Math.pow(10, decimals)));
+}
 
 const Borrow = () => {
   const { isConnected, publicKey } = useFreighter();
@@ -56,16 +60,9 @@ const Borrow = () => {
       // Get token addresses
       const borrowTokenAddress = TOKENS[borrowToken].address;
       const collateralTokenAddress = TOKENS[collateralToken].address;
-      
+      const contractBorrowAmount = toContractAmount(borrowAmount, TOKENS[borrowToken].decimals).toString();
       // Call the real Soroban contract borrow function
-      const result = await borrowAsset(
-        borrowTokenAddress,
-        parseFloat(borrowAmount),
-        collateralTokenAddress,
-        parseFloat(collateralAmount),
-        publicKey
-      );
-      
+      const result = await borrowFromBlend(publicKey, borrowTokenAddress, contractBorrowAmount);
       if (result && result.successful) {
         alert('Borrow successful!');
         setBorrowAmount('');

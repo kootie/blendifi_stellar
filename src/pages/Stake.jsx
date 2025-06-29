@@ -1,7 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useFreighter } from '../hooks/useFreighter';
 import { TOKENS, getTokenBalance, getTokenPrice } from '../utils/tokens';
-import { stakeBlend } from '../utils/contract';
+import { stakeBlend, getUserPosition, unstakeBlend, claimRewards } from '../utils/contract';
+
+// Helper for amount conversion
+function toContractAmount(amount, decimals) {
+  return BigInt(Math.floor(parseFloat(amount) * Math.pow(10, decimals)));
+}
 
 const Stake = () => {
   const { isConnected, publicKey } = useFreighter();
@@ -24,9 +29,10 @@ const Stake = () => {
     try {
       const balance = await getTokenBalance(publicKey, 'BLEND');
       setBlendBalance(balance);
-      // TODO: Replace with real contract call for stakedAmount and rewards
-      setStakedAmount(250);
-      setRewards(45.20);
+      // Fetch real contract data for stakedAmount and rewards
+      const position = await getUserPosition(publicKey);
+      setStakedAmount(position.staked_blend || 0);
+      setRewards(position.rewards_earned || 0);
     } catch (error) {
       console.error('Error loading staking data:', error);
     }
@@ -43,8 +49,8 @@ const Stake = () => {
     }
     setIsStaking(true);
     try {
-      // Call the real Soroban contract staking function
-      const result = await stakeBlend(parseFloat(stakeAmount), publicKey);
+      const contractAmount = toContractAmount(stakeAmount, 7).toString();
+      const result = await stakeBlend(publicKey, contractAmount);
       if (result && result.successful) {
         alert('Successfully staked BLEND tokens!');
         setStakeAmount('');
@@ -65,19 +71,21 @@ const Stake = () => {
       alert('Please enter a valid amount to unstake');
       return;
     }
-
     if (parseFloat(unstakeAmount) > stakedAmount) {
       alert('Insufficient staked amount');
       return;
     }
-
     setIsUnstaking(true);
     try {
-      // TODO: Replace with real Soroban contract call for unstaking
-      alert('Unstaking is not yet implemented.');
-      // Example: await unstakeBlend(parseFloat(unstakeAmount), publicKey);
-      setUnstakeAmount('');
-      // loadStakingData();
+      const contractAmount = toContractAmount(unstakeAmount, 7).toString();
+      const result = await unstakeBlend(publicKey, contractAmount);
+      if (result && result.successful) {
+        alert('Successfully unstaked BLEND tokens!');
+        setUnstakeAmount('');
+        loadStakingData();
+      } else {
+        alert('Failed to unstake tokens. Please try again.');
+      }
     } catch (error) {
       console.error('Unstaking error:', error);
       alert(`Unstaking failed: ${error.message}`);
@@ -91,12 +99,15 @@ const Stake = () => {
       alert('No rewards to claim');
       return;
     }
-
     setIsLoading(true);
     try {
-      // Mock claim rewards transaction
-      alert(`Successfully claimed ${rewards.toFixed(2)} BLEND rewards!`);
-      setRewards(0);
+      const result = await claimRewards(publicKey);
+      if (result && result.successful) {
+        alert('Successfully claimed rewards!');
+        loadStakingData();
+      } else {
+        alert('Failed to claim rewards. Please try again.');
+      }
     } catch (error) {
       console.error('Claim rewards error:', error);
       alert(`Failed to claim rewards: ${error.message}`);

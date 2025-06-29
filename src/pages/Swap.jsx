@@ -3,6 +3,10 @@ import { useFreighter } from '../hooks/useFreighter';
 import { TOKENS, getTokenBalance, getTokenPrice } from '../utils/tokens';
 import { swapTokens } from '../utils/contract';
 
+function toContractAmount(amount, decimals) {
+  return BigInt(Math.floor(parseFloat(amount) * Math.pow(10, decimals)));
+}
+
 const Swap = () => {
   const { isConnected, publicKey } = useFreighter();
   const [fromToken, setFromToken] = useState('XLM');
@@ -52,23 +56,15 @@ const Swap = () => {
     setIsSwapping(true);
     try {
       // Calculate minimum amount out with slippage
-      const amountIn = parseFloat(amount);
-      const expectedAmountOut = amountIn * price;
-      const minAmountOut = expectedAmountOut * (1 - slippage / 100);
-      
+      const amountIn = toContractAmount(amount, TOKENS[fromToken].decimals).toString();
+      const expectedAmountOut = parseFloat(amount) * price;
+      const minAmountOut = toContractAmount(expectedAmountOut * (1 - slippage / 100), TOKENS[toToken].decimals).toString();
       // Get token addresses
       const fromTokenAddress = TOKENS[fromToken].address;
       const toTokenAddress = TOKENS[toToken].address;
-      
+      const deadline = Math.floor(Date.now() / 1000) + 20 * 60; // 20 minutes from now
       // Call the real Soroban contract swap function
-      const result = await swapTokens(
-        fromTokenAddress,
-        toTokenAddress,
-        amountIn,
-        minAmountOut,
-        publicKey
-      );
-      
+      const result = await swapTokens(publicKey, fromTokenAddress, toTokenAddress, amountIn, minAmountOut, deadline);
       if (result && result.successful) {
         alert('Swap successful!');
         setAmount('');
