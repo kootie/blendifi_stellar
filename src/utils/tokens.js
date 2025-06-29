@@ -67,16 +67,12 @@ export const getTokenBalance = async (address, tokenSymbol) => {
     }
   }
 
-  // For contract tokens, call the token contract's balance method
+  // For contract tokens (BLEND, USDC, etc.)
   try {
-    const server = new SorobanClient.Server(RPC_URL, { allowHttp: true });
-    const result = await server.callContract({
-      contractAddress: token.address,
-      functionName: 'balance',
-      args: [address]
-    });
-    // Assume result is a string or number
-    return Number(result) || 0;
+    const contract = new SorobanClient.Contract(token.address);
+    const result = await contract.call('balance', { user: address });
+    // Convert from smallest unit (u128) to float (assuming 7 decimals for BLEND)
+    return Number(result) / Math.pow(10, 7);
   } catch {
     return 0;
   }
