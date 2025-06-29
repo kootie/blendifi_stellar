@@ -177,4 +177,49 @@ export async function claimRewards(userAddress) {
 export async function unstakeBlend(userAddress, amount) {
   const args = [userAddress, amount];
   return await contractCall('unstake_blend', args, userAddress);
-} 
+}
+
+// Placeholder gas price fetcher for Soroban (replace with real logic if available)
+export const getGasPrice = async () => {
+  // Soroban does not use EVM gas, so this is a placeholder.
+  // If you have a real endpoint, use it here.
+  return 0.0001; // Example: 0.0001 BLEND per tx
+};
+
+// Placeholder gas estimator for staking (replace with real logic if available)
+export const estimateGasForStake = async () => {
+  // Soroban does not use EVM gas, so this is a placeholder.
+  // If you have a real endpoint, use it here.
+  return 1; // Example: 1 unit (so total cost = gasPrice * 1)
+};
+
+// Real Soroban fee estimation for staking
+export const estimateStakeFee = async (userAddress, amount) => {
+  const server = new SorobanClient.Server(RPC_URL, { allowHttp: true });
+  const account = await server.getAccount(userAddress);
+
+  // Build the transaction (do not sign)
+  const tx = new SorobanClient.TransactionBuilder(account, {
+    fee: '100', // Placeholder, will be replaced by simulation
+    networkPassphrase: NETWORK_PASSPHRASE,
+  })
+    .addOperation(SorobanClient.Operation.invokeHostFunction({
+      function: {
+        type: 'invokeContract',
+        contractAddress: CONTRACT_ADDRESS,
+        functionName: 'stake_blend',
+        args: [userAddress, amount]
+      }
+    }))
+    .setTimeout(30)
+    .build();
+
+  // Simulate the transaction
+  const sim = await server.simulateTransaction(tx);
+
+  // The fee is in stroops (1 stroop = 0.0000001 XLM)
+  const feeStroops = sim.minResourceFee;
+  const feeXLM = feeStroops / 1e7; // 1 XLM = 10^7 stroops
+
+  return { feeStroops, feeXLM };
+}; 

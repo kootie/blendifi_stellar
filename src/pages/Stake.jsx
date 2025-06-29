@@ -3,170 +3,222 @@ import { useFreighter } from '../hooks/useFreighter';
 import { TOKENS, getTokenBalance, getTokenPrice } from '../utils/tokens';
 import { stakeBlend, getUserPosition, unstakeBlend, claimRewards } from '../utils/contract';
 
-// Helper for amount conversion
-function toStroops(amount, decimals = 7) {
-  // Remove commas and whitespace
-  const cleanAmount = amount.replace(/,/g, '').trim();
-  const numAmount = parseFloat(cleanAmount);
-  // Enhanced validation
-  if (isNaN(numAmount)) {
-    throw new Error('Invalid amount format');
+// Debug helper to log all relevant data
+const debugLog = (label, data) => {
+  console.log(`🔍 DEBUG ${label}:`, data);
+};
+
+// Enhanced amount conversion with detailed logging
+function toContractAmount(amount, decimals) {
+  try {
+    debugLog('Amount Conversion Input', { amount, decimals, type: typeof amount });
+    
+    if (!amount || isNaN(amount) || parseFloat(amount) <= 0) {
+      throw new Error('Invalid amount');
+    }
+    
+    const numAmount = parseFloat(amount);
+    const multiplier = Math.pow(10, decimals);
+    const result = Math.floor(numAmount * multiplier);
+    
+    debugLog('Amount Conversion Output', { 
+      numAmount, 
+      multiplier, 
+      result, 
+      bigIntResult: BigInt(result).toString() 
+    });
+    
+    if (result > Number.MAX_SAFE_INTEGER) {
+      throw new Error('Amount too large');
+    }
+    
+    return BigInt(result);
+  } catch (error) {
+    console.error('❌ Amount conversion error:', error);
+    throw error;
   }
-  if (numAmount <= 0) {
-    throw new Error('Amount must be greater than zero');
-  }
-  if (!Number.isFinite(numAmount * Math.pow(10, decimals))) {
-    throw new Error('Amount exceeds maximum limit');
-  }
-  const result = Math.floor(numAmount * Math.pow(10, decimals)).toString();
-  console.log(`Converted ${amount} to ${result}`);
-  return result;
 }
 
-const Stake = () => {
-  const { isConnected, publicKey } = useFreighter();
-  const [blendBalance, setBlendBalance] = useState(0);
+const DebugStake = () => {
+  const { isConnected, publicKey, kit } = useFreighter();
+  const [balanceData, setBalanceData] = useState({
+    blend: 0,
+    xlm: 0,
+    usdc: 0
+  });
+  const [rawBalanceData, setRawBalanceData] = useState({});
   const [stakedAmount, setStakedAmount] = useState(0);
   const [rewards, setRewards] = useState(0);
   const [stakeAmount, setStakeAmount] = useState('');
-  const [unstakeAmount, setUnstakeAmount] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isStaking, setIsStaking] = useState(false);
-  const [isUnstaking, setIsUnstaking] = useState(false);
   const [error, setError] = useState('');
-
-  const blendDecimals = TOKENS.BLEND.decimals || 7;
+  const [debugInfo, setDebugInfo] = useState({});
 
   useEffect(() => {
     if (isConnected && publicKey) {
-      loadStakingData();
+      loadAllData();
     }
   }, [isConnected, publicKey]);
 
-  const loadStakingData = async () => {
+  const loadAllData = async () => {
     try {
+      setIsLoading(true);
       setError('');
-      const balance = await getTokenBalance(publicKey, 'BLEND');
-      setBlendBalance(balance);
-      // Fetch real contract data for stakedAmount and rewards
-      const position = await getUserPosition();
-      setStakedAmount(position.staked_blend || 0);
-      setRewards(position.rewards_earned || 0);
+      
+      debugLog('Loading data for', { publicKey, isConnected });
+      
+      // Check if we have the kit (Freighter connection)
+      if (!kit) {
+        throw new Error('Freighter kit not available');
+      }
+      
+      // Get raw account data first
+      const accountData = await kit.server.loadAccount(publicKey);
+      debugLog('Raw Account Data', accountData);
+      
+      // Get balances for different tokens
+      const balances = {};
+      const rawBalances = {};
+      
+      // Get native XLM balance
+      const xlmBalance = accountData.balances.find(b => b.asset_type === 'native');
+      balances.xlm = xlmBalance ? parseFloat(xlmBalance.balance) : 0;
+      rawBalances.xlm = xlmBalance;
+      
+      debugLog('XLM Balance', { balance: balances.xlm, raw: xlmBalance });
+      
+      // Get BLEND balance
+      try {
+        const blendBalance = await getTokenBalance(publicKey, 'BLEND');
+        balances.blend = blendBalance;
+        debugLog('BLEND Balance from getTokenBalance', blendBalance);
+      } catch (blendError) {
+        console.error('❌ Error getting BLEND balance:', blendError);
+        balances.blend = 0;
+      }
+      
+      // Get USDC balance
+      try {
+        const usdcBalance = await getTokenBalance(publicKey, 'USDC');
+        balances.usdc = usdcBalance;
+        debugLog('USDC Balance from getTokenBalance', usdcBalance);
+      } catch (usdcError) {
+        console.error('❌ Error getting USDC balance:', usdcError);
+        balances.usdc = 0;
+      }
+      
+      // Check all balances in the account
+      debugLog('All Account Balances', accountData.balances);
+      
+      setBalanceData(balances);
+      setRawBalanceData(rawBalances);
+      
+      // Get staking data
+      try {
+        const position = await getUserPosition(publicKey);
+        debugLog('User Position', position);
+        setStakedAmount(position.staked_blend || 0);
+        setRewards(position.rewards_earned || 0);
+      } catch (positionError) {
+        console.error('❌ Error getting user position:', positionError);
+      }
+      
+      // Set debug info
+      setDebugInfo({
+        accountData: accountData,
+        balances: balances,
+        rawBalances: rawBalances,
+        publicKey: publicKey,
+        networkPassphrase: kit.networkPassphrase,
+        serverUrl: kit.server.serverURL.href
+      });
+      
     } catch (error) {
-      console.error('Error loading staking data:', error);
-      setError('Failed to load staking data');
+      console.error('❌ Error loading data:', error);
+      setError(`Failed to load data: ${error.message}`);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleStake = async () => {
     setError('');
+    
+    debugLog('Stake Attempt', {
+      stakeAmount,
+      blendBalance: balanceData.blend,
+      publicKey,
+      isConnected
+    });
+    
+    // Enhanced validation
     if (!stakeAmount || parseFloat(stakeAmount) <= 0) {
       setError('Please enter a valid amount to stake');
       return;
     }
-    // Additional validation
-    if (stakeAmount.includes(',')) {
-      setError('Please remove commas from the amount');
+    
+    const numStakeAmount = parseFloat(stakeAmount);
+    
+    if (numStakeAmount > balanceData.blend) {
+      setError(`Insufficient BLEND balance. You have ${balanceData.blend} BLEND, trying to stake ${numStakeAmount}`);
       return;
     }
-    if (parseFloat(stakeAmount) > blendBalance) {
-      setError('Insufficient BLEND balance');
+    
+    // Check if amount is too small
+    if (numStakeAmount < 0.0000001) {
+      setError('Amount too small. Minimum stake amount is 0.0000001 BLEND');
       return;
     }
+    
     setIsStaking(true);
+    
     try {
-      const contractAmount = toStroops(stakeAmount, blendDecimals);
-      // Enhanced logging
-      console.log('Staking attempt details:');
-      console.log('------------------------');
-      console.log(`Raw amount: ${stakeAmount}`);
-      console.log(`Converted amount: ${contractAmount}`);
-      console.log(`Decimals used: ${blendDecimals}`);
-      console.log(`Public Key: ${publicKey}`);
-      console.log(`Token Balance: ${blendBalance}`);
-
-      const result = await stakeBlend(publicKey, contractAmount);
+      // Convert amount with detailed logging
+      const contractAmount = toContractAmount(stakeAmount, 7);
+      const contractAmountStr = contractAmount.toString();
+      
+      debugLog('Staking Parameters', {
+        originalAmount: stakeAmount,
+        contractAmount: contractAmountStr,
+        publicKey: publicKey
+      });
+      
+      // Check if we have enough XLM for transaction fees
+      if (balanceData.xlm < 1) {
+        setError('Insufficient XLM for transaction fees. You need at least 1 XLM.');
+        return;
+      }
+      
+      const result = await stakeBlend(publicKey, contractAmountStr);
+      
+      debugLog('Staking Result', result);
+      
       if (result && result.successful) {
         setError('');
         alert('Successfully staked BLEND tokens!');
         setStakeAmount('');
-        await loadStakingData();
+        await loadAllData();
       } else {
-        console.error('Staking result:', result);
-        const errorMessage = result?.error || 'Failed to stake tokens';
-        setError(`Staking failed: ${errorMessage}`);
+        setError(`Staking failed: ${result?.error || 'Unknown error'}`);
       }
     } catch (error) {
-      console.error('Staking error:', error);
+      console.error('❌ Staking error:', error);
       setError(`Staking failed: ${error.message}`);
     } finally {
       setIsStaking(false);
     }
   };
 
-  const handleUnstake = async () => {
-    setError('');
-    if (!unstakeAmount || parseFloat(unstakeAmount) <= 0) {
-      setError('Please enter a valid amount to unstake');
-      return;
-    }
-    if (parseFloat(unstakeAmount) > stakedAmount) {
-      setError('Insufficient staked amount');
-      return;
-    }
-    setIsUnstaking(true);
-    try {
-      const contractAmount = toStroops(unstakeAmount, blendDecimals);
-      console.log('Unstaking amount:', unstakeAmount);
-      console.log('Contract amount:', contractAmount);
-      const result = await unstakeBlend(publicKey, contractAmount);
-      if (result && result.successful) {
-        setError('');
-        alert('Successfully unstaked BLEND tokens!');
-        setUnstakeAmount('');
-        await loadStakingData();
-      } else {
-        console.error('Unstaking result:', result);
-        setError('Failed to unstake tokens. Please try again.');
-      }
-    } catch (error) {
-      console.error('Unstaking error:', error);
-      setError(`Unstaking failed: ${error.message}`);
-    } finally {
-      setIsUnstaking(false);
-    }
+  const handleMaxStake = () => {
+    // Leave some buffer for transaction fees
+    const maxAmount = Math.max(0, balanceData.blend - 0.1);
+    setStakeAmount(maxAmount.toString());
   };
 
-  const handleClaimRewards = async () => {
-    if (rewards <= 0) {
-      setError('No rewards to claim');
-      return;
-    }
-    setIsLoading(true);
-    setError('');
-    try {
-      console.log('Claiming rewards for:', publicKey);
-      const result = await claimRewards(publicKey);
-      if (result && result.successful) {
-        setError('');
-        alert('Successfully claimed rewards!');
-        await loadStakingData();
-      } else {
-        console.error('Claim rewards result:', result);
-        setError('Failed to claim rewards. Please try again.');
-      }
-    } catch (error) {
-      console.error('Claim rewards error:', error);
-      setError(`Failed to claim rewards: ${error.message}`);
-    } finally {
-      setIsLoading(false);
-    }
+  const handleRefresh = () => {
+    loadAllData();
   };
-
-  const blendPrice = getTokenPrice('BLEND');
-  const totalStakedValue = stakedAmount * blendPrice;
-  const rewardsValue = rewards * blendPrice;
-  const apy = 15.2; // Mock APY
 
   if (!isConnected) {
     return (
@@ -174,7 +226,7 @@ const Stake = () => {
         <div className="card">
           <h2 className="mb-4">Connect Your Wallet</h2>
           <p className="text-secondary mb-6">
-            Please connect your Freighter wallet to stake BLEND tokens.
+            Please connect your Freighter wallet to continue.
           </p>
         </div>
       </div>
@@ -183,98 +235,102 @@ const Stake = () => {
 
   return (
     <div className="stake">
-      <h1 className="mb-8">Stake BLEND Tokens</h1>
+      <div className="flex justify-between items-center mb-8">
+        <h1>Debug Staking & Balances</h1>
+        <button onClick={handleRefresh} className="btn btn-secondary">
+          🔄 Refresh Data
+        </button>
+      </div>
 
-      {/* Staking Overview */}
+      {/* Error Display */}
+      {error && (
+        <div className="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded">
+          <strong>Error:</strong> {error}
+        </div>
+      )}
+
+      {/* Loading State */}
+      {isLoading && (
+        <div className="mb-6 p-4 bg-blue-100 border border-blue-400 text-blue-700 rounded">
+          Loading data...
+        </div>
+      )}
+
+      {/* Balance Overview */}
       <section className="mb-8">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="card text-center">
+        <h2 className="mb-4">Balance Overview</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="card">
+            <h3 className="text-lg font-bold mb-2">XLM (Native)</h3>
             <div className="text-2xl font-bold text-primary mb-2">
-              {blendBalance.toFixed(2)}
+              {balanceData.xlm.toFixed(7)}
             </div>
-            <div className="text-sm text-secondary">Available BLEND</div>
-            <div className="text-xs text-secondary mt-1">
-              ${(blendBalance * blendPrice).toFixed(2)}
+            <div className="text-sm text-secondary">
+              Raw: {rawBalanceData.xlm?.balance || 'N/A'}
             </div>
           </div>
           
-          <div className="card text-center">
+          <div className="card">
+            <h3 className="text-lg font-bold mb-2">BLEND</h3>
             <div className="text-2xl font-bold text-success mb-2">
-              {stakedAmount.toFixed(2)}
+              {balanceData.blend.toFixed(7)}
             </div>
-            <div className="text-sm text-secondary">Staked BLEND</div>
-            <div className="text-xs text-secondary mt-1">
-              ${totalStakedValue.toFixed(2)}
+            <div className="text-sm text-secondary">
+              Available for staking
             </div>
           </div>
           
-          <div className="card text-center">
+          <div className="card">
+            <h3 className="text-lg font-bold mb-2">USDC</h3>
             <div className="text-2xl font-bold text-warning mb-2">
-              {rewards.toFixed(2)}
+              {balanceData.usdc.toFixed(6)}
             </div>
-            <div className="text-sm text-secondary">Rewards Earned</div>
-            <div className="text-xs text-secondary mt-1">
-              ${rewardsValue.toFixed(2)}
-            </div>
-          </div>
-          
-          <div className="card text-center">
-            <div className="text-2xl font-bold text-primary mb-2">
-              {apy}%
-            </div>
-            <div className="text-sm text-secondary">Current APY</div>
-            <div className="text-xs text-success mt-1">
-              +2.1% from last week
+            <div className="text-sm text-secondary">
+              Available for swapping
             </div>
           </div>
         </div>
       </section>
 
-      {/* Staking Actions */}
-      {error && (
-        <div className="alert alert-error mb-4">
-          <div className="flex justify-between items-center">
-            <span>{error}</span>
-            {error.includes('invalid parameters') && (
-              <button 
-                onClick={() => setError('')}
-                className="btn btn-sm btn-destructive"
-              >
-                Clear Error
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        {/* Stake Tokens */}
+      {/* Stake Section */}
+      <section className="mb-8">
         <div className="card">
           <h2 className="mb-6">Stake BLEND</h2>
+          
           <div className="form-group">
             <label className="form-label">Amount to Stake</label>
-            <input
-              type="number"
-              className="form-input"
-              placeholder="0.00"
-              value={stakeAmount}
-              onChange={(e) => setStakeAmount(e.target.value)}
-              min="0"
-              step="0.01"
-            />
+            <div className="flex gap-2">
+              <input
+                type="number"
+                className="form-input flex-1"
+                placeholder="0.00"
+                value={stakeAmount}
+                onChange={(e) => setStakeAmount(e.target.value)}
+                min="0"
+                step="0.0000001"
+              />
+              <button
+                onClick={handleMaxStake}
+                className="btn btn-secondary"
+                disabled={balanceData.blend <= 0}
+              >
+                MAX
+              </button>
+            </div>
             <div className="text-sm text-secondary mt-2">
-              Available: {blendBalance.toFixed(2)} BLEND
+              Available: {balanceData.blend.toFixed(7)} BLEND
             </div>
           </div>
           
-          <div className="form-group">
-            <div className="flex justify-between text-sm mb-2">
-              <span>Estimated APY:</span>
-              <span className="text-success">{apy}%</span>
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <div className="text-sm">
+              <span className="text-secondary">Stake Amount:</span>
+              <span className="ml-2 font-mono">{stakeAmount || '0'}</span>
             </div>
-            <div className="flex justify-between text-sm mb-4">
-              <span>Estimated Daily Rewards:</span>
-              <span className="text-secondary">
-                {stakeAmount ? ((parseFloat(stakeAmount) * apy / 100) / 365).toFixed(4) : '0.0000'} BLEND
+            <div className="text-sm">
+              <span className="text-secondary">Contract Amount:</span>
+              <span className="ml-2 font-mono">
+                {stakeAmount ? toContractAmount(stakeAmount, 7).toString() : '0'}
               </span>
             </div>
           </div>
@@ -294,109 +350,67 @@ const Stake = () => {
             )}
           </button>
         </div>
+      </section>
 
-        {/* Unstake Tokens */}
+      {/* Debug Information */}
+      <section className="mb-8">
         <div className="card">
-          <h2 className="mb-6">Unstake BLEND</h2>
-          <div className="form-group">
-            <label className="form-label">Amount to Unstake</label>
-            <input
-              type="number"
-              className="form-input"
-              placeholder="0.00"
-              value={unstakeAmount}
-              onChange={(e) => setUnstakeAmount(e.target.value)}
-              min="0"
-              step="0.01"
-            />
-            <div className="text-sm text-secondary mt-2">
-              Staked: {stakedAmount.toFixed(2)} BLEND
+          <h3 className="mb-4">Debug Information</h3>
+          <div className="text-sm font-mono bg-gray-100 p-4 rounded overflow-auto max-h-96">
+            <div className="mb-2">
+              <strong>Public Key:</strong> {publicKey}
             </div>
-          </div>
-          
-          <div className="form-group">
-            <div className="flex justify-between text-sm mb-2">
-              <span>Unstaking Period:</span>
-              <span className="text-warning">7 days</span>
+            <div className="mb-2">
+              <strong>Network:</strong> {debugInfo.networkPassphrase}
             </div>
-            <div className="flex justify-between text-sm mb-4">
-              <span>You'll receive:</span>
-              <span className="text-secondary">
-                {unstakeAmount ? parseFloat(unstakeAmount).toFixed(4) : '0.0000'} BLEND
-              </span>
+            <div className="mb-2">
+              <strong>Server:</strong> {debugInfo.serverUrl}
             </div>
-          </div>
-          
-          <button
-            onClick={handleUnstake}
-            className="btn btn-secondary w-full"
-            disabled={isUnstaking || !unstakeAmount || parseFloat(unstakeAmount) <= 0}
-          >
-            {isUnstaking ? (
-              <>
-                <div className="spinner"></div>
-                Unstaking...
-              </>
-            ) : (
-              'Unstake BLEND'
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* Claim Rewards */}
-      <section className="mt-8">
-        <div className="card">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="mb-2">Claim Rewards</h3>
-              <p className="text-secondary">
-                You have {rewards.toFixed(2)} BLEND rewards available to claim
-              </p>
+            <div className="mb-4">
+              <strong>Balances:</strong>
+              <pre>{JSON.stringify(balanceData, null, 2)}</pre>
             </div>
-            <button
-              onClick={handleClaimRewards}
-              className="btn btn-success"
-              disabled={isLoading || rewards <= 0}
-            >
-              {isLoading ? (
-                <>
-                  <div className="spinner"></div>
-                  Claiming...
-                </>
-              ) : (
-                'Claim Rewards'
-              )}
-            </button>
+            <div className="mb-4">
+              <strong>Raw Account Data:</strong>
+              <pre>{JSON.stringify(debugInfo.accountData?.balances, null, 2)}</pre>
+            </div>
           </div>
         </div>
       </section>
 
-      {/* Staking Info */}
-      <section className="mt-8">
+      {/* Troubleshooting Guide */}
+      <section className="mb-8">
         <div className="card">
-          <h3 className="mb-4">How Staking Works</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <h3 className="mb-4">Troubleshooting Guide</h3>
+          <div className="space-y-4">
             <div>
-              <div className="text-2xl mb-2">🪙</div>
-              <h4 className="mb-2">Stake Tokens</h4>
-              <p className="text-sm text-secondary">
-                Lock your BLEND tokens to earn rewards from protocol fees and incentives.
-              </p>
+              <h4 className="font-bold text-red-600">If you see "Insufficient Balance":</h4>
+              <ul className="list-disc list-inside text-sm text-secondary mt-2">
+                <li>Make sure you have BLEND tokens in your wallet</li>
+                <li>Check if the token balance is loading correctly (see debug info above)</li>
+                <li>Ensure you have enough XLM for transaction fees (minimum 1 XLM)</li>
+                <li>Try refreshing the data with the refresh button</li>
+              </ul>
             </div>
+            
             <div>
-              <div className="text-2xl mb-2">📈</div>
-              <h4 className="mb-2">Earn Rewards</h4>
-              <p className="text-sm text-secondary">
-                Earn up to 15.2% APY on your staked tokens, paid out in BLEND.
-              </p>
+              <h4 className="font-bold text-red-600">If staking fails:</h4>
+              <ul className="list-disc list-inside text-sm text-secondary mt-2">
+                <li>Check the browser console for detailed error messages</li>
+                <li>Verify the contract address and network are correct</li>
+                <li>Make sure Freighter is connected to the right network</li>
+                <li>Try with a smaller amount first</li>
+              </ul>
             </div>
+            
             <div>
-              <div className="text-2xl mb-2">🔓</div>
-              <h4 className="mb-2">Unstake Anytime</h4>
-              <p className="text-sm text-secondary">
-                Unstake your tokens after a 7-day cooldown period with no penalties.
-              </p>
+              <h4 className="font-bold text-red-600">If swapping fails:</h4>
+              <ul className="list-disc list-inside text-sm text-secondary mt-2">
+                <li>Check if you have the source token (USDC/BLEND)</li>
+                <li>Verify the swap contract is deployed and accessible</li>
+                <li>Make sure slippage tolerance is set correctly</li>
+                <li>Check if the liquidity pool has sufficient funds</li>
+              </ul>
             </div>
           </div>
         </div>
@@ -405,4 +419,4 @@ const Stake = () => {
   );
 };
 
-export default Stake; 
+export default DebugStake; 

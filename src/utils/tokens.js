@@ -39,6 +39,9 @@ export const TOKENS = {
 
 import { getAssetPrice, RPC_URL } from './contract';
 import * as SorobanClient from 'soroban-client';
+import * as StellarSdk from 'stellar-sdk';
+
+const HORIZON_URL = 'https://horizon-testnet.stellar.org'; // Change to mainnet if needed
 
 export const getTokenPrice = async (symbol) => {
   const token = TOKENS[symbol];
@@ -55,15 +58,16 @@ export const getTokenBalance = async (address, tokenSymbol) => {
   const token = TOKENS[tokenSymbol];
   if (!token || !address) return 0;
 
-  // If XLM, fetch native balance
+  // If XLM, fetch native balance from Horizon
   if (tokenSymbol === 'XLM') {
     try {
-      const server = new SorobanClient.Server(RPC_URL, { allowHttp: true });
-      const account = await server.getAccount(address);
+      const server = new StellarSdk.Server(HORIZON_URL);
+      const account = await server.loadAccount(address);
       const xlmBalance = account.balances.find(b => b.asset_type === 'native');
       const value = xlmBalance ? parseFloat(xlmBalance.balance) : 0;
       return Number.isFinite(value) ? value : 0;
-    } catch {
+    } catch (e) {
+      console.error('Error fetching XLM balance:', e);
       return 0;
     }
   }
@@ -76,7 +80,8 @@ export const getTokenBalance = async (address, tokenSymbol) => {
     const decimals = token.decimals || 7;
     const value = Number(result) / Math.pow(10, decimals);
     return Number.isFinite(value) ? value : 0;
-  } catch {
+  } catch (e) {
+    console.error(`Error fetching ${tokenSymbol} balance:`, e);
     return 0;
   }
 };
