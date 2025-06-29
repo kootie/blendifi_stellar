@@ -61,7 +61,8 @@ export const getTokenBalance = async (address, tokenSymbol) => {
       const server = new SorobanClient.Server(RPC_URL, { allowHttp: true });
       const account = await server.getAccount(address);
       const xlmBalance = account.balances.find(b => b.asset_type === 'native');
-      return xlmBalance ? parseFloat(xlmBalance.balance) : 0;
+      const value = xlmBalance ? parseFloat(xlmBalance.balance) : 0;
+      return Number.isFinite(value) ? value : 0;
     } catch {
       return 0;
     }
@@ -71,8 +72,10 @@ export const getTokenBalance = async (address, tokenSymbol) => {
   try {
     const contract = new SorobanClient.Contract(token.address);
     const result = await contract.call('balance', { user: address });
-    // Convert from smallest unit (u128) to float (assuming 7 decimals for BLEND)
-    return Number(result) / Math.pow(10, 7);
+    // Convert from smallest unit (u128) to float (using token.decimals)
+    const decimals = token.decimals || 7;
+    const value = Number(result) / Math.pow(10, decimals);
+    return Number.isFinite(value) ? value : 0;
   } catch {
     return 0;
   }

@@ -4,8 +4,23 @@ import { TOKENS, getTokenBalance, getTokenPrice } from '../utils/tokens';
 import { stakeBlend, getUserPosition, unstakeBlend, claimRewards } from '../utils/contract';
 
 // Helper for amount conversion
-function toContractAmount(amount, decimals) {
-  return BigInt(Math.floor(parseFloat(amount) * Math.pow(10, decimals)));
+function toStroops(amount, decimals = 7) {
+  // Remove commas and whitespace
+  const cleanAmount = amount.replace(/,/g, '').trim();
+  const numAmount = parseFloat(cleanAmount);
+  // Enhanced validation
+  if (isNaN(numAmount)) {
+    throw new Error('Invalid amount format');
+  }
+  if (numAmount <= 0) {
+    throw new Error('Amount must be greater than zero');
+  }
+  if (!Number.isFinite(numAmount * Math.pow(10, decimals))) {
+    throw new Error('Amount exceeds maximum limit');
+  }
+  const result = Math.floor(numAmount * Math.pow(10, decimals)).toString();
+  console.log(`Converted ${amount} to ${result}`);
+  return result;
 }
 
 const Stake = () => {
@@ -18,6 +33,9 @@ const Stake = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isStaking, setIsStaking] = useState(false);
   const [isUnstaking, setIsUnstaking] = useState(false);
+  const [error, setError] = useState('');
+
+  const blendDecimals = TOKENS.BLEND.decimals || 7;
 
   useEffect(() => {
     if (isConnected && publicKey) {
@@ -27,68 +45,93 @@ const Stake = () => {
 
   const loadStakingData = async () => {
     try {
+      setError('');
       const balance = await getTokenBalance(publicKey, 'BLEND');
       setBlendBalance(balance);
       // Fetch real contract data for stakedAmount and rewards
-      const position = await getUserPosition(publicKey);
+      const position = await getUserPosition();
       setStakedAmount(position.staked_blend || 0);
       setRewards(position.rewards_earned || 0);
     } catch (error) {
       console.error('Error loading staking data:', error);
+      setError('Failed to load staking data');
     }
   };
 
   const handleStake = async () => {
+    setError('');
     if (!stakeAmount || parseFloat(stakeAmount) <= 0) {
-      alert('Please enter a valid amount to stake');
+      setError('Please enter a valid amount to stake');
+      return;
+    }
+    // Additional validation
+    if (stakeAmount.includes(',')) {
+      setError('Please remove commas from the amount');
       return;
     }
     if (parseFloat(stakeAmount) > blendBalance) {
-      alert('Insufficient BLEND balance');
+      setError('Insufficient BLEND balance');
       return;
     }
     setIsStaking(true);
     try {
-      const contractAmount = toContractAmount(stakeAmount, 7).toString();
+      const contractAmount = toStroops(stakeAmount, blendDecimals);
+      // Enhanced logging
+      console.log('Staking attempt details:');
+      console.log('------------------------');
+      console.log(`Raw amount: ${stakeAmount}`);
+      console.log(`Converted amount: ${contractAmount}`);
+      console.log(`Decimals used: ${blendDecimals}`);
+      console.log(`Public Key: ${publicKey}`);
+      console.log(`Token Balance: ${blendBalance}`);
+
       const result = await stakeBlend(publicKey, contractAmount);
       if (result && result.successful) {
+        setError('');
         alert('Successfully staked BLEND tokens!');
         setStakeAmount('');
-        loadStakingData();
+        await loadStakingData();
       } else {
-        alert('Failed to stake tokens. Please try again.');
+        console.error('Staking result:', result);
+        const errorMessage = result?.error || 'Failed to stake tokens';
+        setError(`Staking failed: ${errorMessage}`);
       }
     } catch (error) {
       console.error('Staking error:', error);
-      alert(`Staking failed: ${error.message}`);
+      setError(`Staking failed: ${error.message}`);
     } finally {
       setIsStaking(false);
     }
   };
 
   const handleUnstake = async () => {
+    setError('');
     if (!unstakeAmount || parseFloat(unstakeAmount) <= 0) {
-      alert('Please enter a valid amount to unstake');
+      setError('Please enter a valid amount to unstake');
       return;
     }
     if (parseFloat(unstakeAmount) > stakedAmount) {
-      alert('Insufficient staked amount');
+      setError('Insufficient staked amount');
       return;
     }
     setIsUnstaking(true);
     try {
-      const contractAmount = toContractAmount(unstakeAmount, 7).toString();
+      const contractAmount = toStroops(unstakeAmount, blendDecimals);
+      console.log('Unstaking amount:', unstakeAmount);
+      console.log('Contract amount:', contractAmount);
       const result = await unstakeBlend(publicKey, contractAmount);
       if (result && result.successful) {
+        setError('');
         alert('Successfully unstaked BLEND tokens!');
         setUnstakeAmount('');
-        loadStakingData();
+        await loadStakingData();
       } else {
-        alert('Failed to unstake tokens. Please try again.');
+        console.error('Unstaking result:', result);
+        setError('Failed to unstake tokens. Please try again.');
       }
     } catch (error) {
       console.error('Unstaking error:', error);
-      alert(`Unstaking failed: ${error.message}`);
+      setError(`Unstaking failed: ${error.message}`);
     } finally {
       setIsUnstaking(false);
     }
@@ -96,21 +139,25 @@ const Stake = () => {
 
   const handleClaimRewards = async () => {
     if (rewards <= 0) {
-      alert('No rewards to claim');
+      setError('No rewards to claim');
       return;
     }
     setIsLoading(true);
+    setError('');
     try {
+      console.log('Claiming rewards for:', publicKey);
       const result = await claimRewards(publicKey);
       if (result && result.successful) {
+        setError('');
         alert('Successfully claimed rewards!');
-        loadStakingData();
+        await loadStakingData();
       } else {
-        alert('Failed to claim rewards. Please try again.');
+        console.error('Claim rewards result:', result);
+        setError('Failed to claim rewards. Please try again.');
       }
     } catch (error) {
       console.error('Claim rewards error:', error);
-      alert(`Failed to claim rewards: ${error.message}`);
+      setError(`Failed to claim rewards: ${error.message}`);
     } finally {
       setIsLoading(false);
     }
@@ -184,6 +231,21 @@ const Stake = () => {
       </section>
 
       {/* Staking Actions */}
+      {error && (
+        <div className="alert alert-error mb-4">
+          <div className="flex justify-between items-center">
+            <span>{error}</span>
+            {error.includes('invalid parameters') && (
+              <button 
+                onClick={() => setError('')}
+                className="btn btn-sm btn-destructive"
+              >
+                Clear Error
+              </button>
+            )}
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
         {/* Stake Tokens */}
         <div className="card">

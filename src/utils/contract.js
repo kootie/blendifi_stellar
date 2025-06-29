@@ -13,9 +13,14 @@ export const stellarConfig = {
 };
 
 // Generic contract call utility
-export async function contractCall(functionName, params, userAddress) {
+export async function contractCall(functionName, args, userAddress) {
   const server = new SorobanClient.Server(RPC_URL, { allowHttp: true });
   const account = await server.getAccount(userAddress);
+
+  // args should always be an array now
+  if (!Array.isArray(args)) {
+    throw new Error('Arguments to contractCall must be an array');
+  }
 
   const tx = new SorobanClient.TransactionBuilder(account, {
     fee: '100',
@@ -26,7 +31,7 @@ export async function contractCall(functionName, params, userAddress) {
         type: 'invokeContract',
         contractAddress: CONTRACT_ADDRESS,
         functionName,
-        args: [params]
+        args
       }
     }))
     .setTimeout(30)
@@ -40,13 +45,12 @@ export async function contractCall(functionName, params, userAddress) {
   return result;
 }
 
-// Updated stakeBlend using contractCall
-export async function stakeBlend(userAddress, amount) {
-  const params = {
-    user: userAddress,
-    amount: amount // should be u128 (string or BigInt)
-  };
-  return await contractCall('stake_blend', params, userAddress);
+// Updated stakeBlend using explicit argument array
+export async function stakeBlend(userAddress, contractAmount) {
+  // contractAmount is already a string in smallest unit
+  const args = [userAddress, contractAmount];
+  console.log('Staking args:', args);
+  return await contractCall('stake_blend', args, userAddress);
 }
 
 // Real borrow function using Soroban contract
@@ -81,65 +85,30 @@ export async function borrowAsset(asset, amount, collateralToken, collateralAmou
 }
 
 // Get user position from contract
-export async function getUserPosition(userAddress) {
-  const server = new SorobanClient.Server(RPC_URL, { allowHttp: true });
-  
-  try {
-    // Call the contract's get_user_position function
-    const result = await server.callContract({
-      contractAddress: CONTRACT_ADDRESS,
-      functionName: 'get_user_position',
-      args: [userAddress]
-    });
-    
-    return result;
-  } catch (error) {
-    console.error('Error fetching user position:', error);
-    // Return mock data for now
-    return {
-      supplied_assets: {},
-      borrowed_assets: {},
-      staked_blend: 0,
-      rewards_earned: 0,
-      health_factor: 1000000000000000000 // 1.0 in wei
-    };
-  }
+export async function getUserPosition() {
+  // TODO: Replace with real contract call using Soroban simulation or RPC
+  // For now, return mock data to prevent errors
+  return {
+    supplied_assets: {},
+    borrowed_assets: {},
+    staked_blend: 0,
+    rewards_earned: 0,
+    health_factor: 1000000000000000000 // 1.0 in wei
+  };
 }
 
 // Get health status from contract
-export async function getHealthStatus(userAddress) {
-  const server = new SorobanClient.Server(RPC_URL, { allowHttp: true });
-  
-  try {
-    const result = await server.callContract({
-      contractAddress: CONTRACT_ADDRESS,
-      functionName: 'get_health_status',
-      args: [userAddress]
-    });
-    
-    return result;
-  } catch (error) {
-    console.error('Error fetching health status:', error);
-    return 0; // Healthy by default
-  }
+export async function getHealthStatus() {
+  // TODO: Replace with real contract call using Soroban simulation or RPC
+  // For now, return null to prevent errors
+  return null;
 }
 
 // Get asset price from contract
-export async function getAssetPrice(assetAddress) {
-  const server = new SorobanClient.Server(RPC_URL, { allowHttp: true });
-  
-  try {
-    const result = await server.callContract({
-      contractAddress: CONTRACT_ADDRESS,
-      functionName: 'get_asset_price',
-      args: [assetAddress]
-    });
-    
-    return result;
-  } catch (error) {
-    console.error('Error fetching asset price:', error);
-    return 0;
-  }
+export async function getAssetPrice() {
+  // TODO: Replace with real contract call using Soroban simulation or RPC
+  // For now, return null to prevent errors
+  return null;
 }
 
 // Contract interaction helpers
@@ -184,47 +153,28 @@ export const submitTransaction = async (signedTransaction) => {
 
 // Supply to Blend (Lending)
 export async function supplyToBlend(userAddress, assetAddress, amount, asCollateral) {
-  const params = {
-    user: userAddress,
-    asset: assetAddress,
-    amount: amount, // u128
-    as_collateral: asCollateral // boolean
-  };
-  return await contractCall('supply_to_blend', params, userAddress);
+  const args = [userAddress, assetAddress, amount, asCollateral];
+  return await contractCall('supply_to_blend', args, userAddress);
 }
 
 // Borrow from Blend
 export async function borrowFromBlend(userAddress, assetAddress, amount) {
-  const params = {
-    user: userAddress,
-    asset: assetAddress,
-    amount: amount // u128
-  };
-  return await contractCall('borrow_from_blend', params, userAddress);
+  const args = [userAddress, assetAddress, amount];
+  return await contractCall('borrow_from_blend', args, userAddress);
 }
 
 // Token Swap
 export async function swapTokens(userAddress, tokenIn, tokenOut, amountIn, minAmountOut, deadline) {
-  const params = {
-    user: userAddress,
-    token_in: tokenIn,
-    token_out: tokenOut,
-    amount_in: amountIn, // u128
-    min_amount_out: minAmountOut, // u128
-    deadline: deadline // u64
-  };
-  return await contractCall('swap_tokens', params, userAddress);
+  const args = [userAddress, tokenIn, tokenOut, amountIn, minAmountOut, deadline];
+  return await contractCall('swap_tokens', args, userAddress);
 }
 
 export async function claimRewards(userAddress) {
-  const params = { user: userAddress };
-  return await contractCall('claim_rewards', params, userAddress);
+  const args = [userAddress];
+  return await contractCall('claim_rewards', args, userAddress);
 }
 
 export async function unstakeBlend(userAddress, amount) {
-  const params = {
-    user: userAddress,
-    amount: amount // u128
-  };
-  return await contractCall('unstake_blend', params, userAddress);
+  const args = [userAddress, amount];
+  return await contractCall('unstake_blend', args, userAddress);
 } 
