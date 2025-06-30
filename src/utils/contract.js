@@ -1,20 +1,23 @@
 import * as SorobanClient from 'soroban-client';
+import { Server as HorizonServer } from 'stellar-sdk';
+import { Server as SorobanServer, Contract, scValToNative, Networks } from 'soroban-client';
 
 // Contract configuration for Blendifi DeFi MVP
 export const CONTRACT_ADDRESS = 'CA26SDP73CGMH5E5HHTHT3DN4YPH4DJUNRBRHPB4ZJTF2DQXDMCXXTZH';
-export const RPC_URL = 'https://soroban-testnet.stellar.org';
 export const NETWORK_PASSPHRASE = 'Test SDF Network ; September 2015';
+export const HORIZON_URL = 'https://horizon-testnet.stellar.org';
+export const SOROBAN_RPC = 'https://soroban-testnet.stellar.org';
 
 // Stellar SDK configuration
 export const stellarConfig = {
   network: 'testnet',
-  rpcUrl: RPC_URL,
+  rpcUrl: SOROBAN_RPC,
   passphrase: NETWORK_PASSPHRASE
 };
 
 // Generic contract call utility
 export async function contractCall(functionName, args, userAddress) {
-  const server = new SorobanClient.Server(RPC_URL, { allowHttp: true });
+  const server = new SorobanClient.Server(SOROBAN_RPC, { allowHttp: true });
   const account = await server.getAccount(userAddress);
 
   // args should always be an array now
@@ -55,7 +58,7 @@ export async function stakeBlend(userAddress, contractAmount) {
 
 // Real borrow function using Soroban contract
 export async function borrowAsset(asset, amount, collateralToken, collateralAmount, userAddress) {
-  const server = new SorobanClient.Server(RPC_URL, { allowHttp: true });
+  const server = new SorobanClient.Server(SOROBAN_RPC, { allowHttp: true });
   const account = await server.getAccount(userAddress);
 
   // Prepare contract invocation
@@ -195,7 +198,7 @@ export const estimateGasForStake = async () => {
 
 // Real Soroban fee estimation for staking
 export const estimateStakeFee = async (userAddress, amount) => {
-  const server = new SorobanClient.Server(RPC_URL, { allowHttp: true });
+  const server = new SorobanClient.Server(SOROBAN_RPC, { allowHttp: true });
   const account = await server.getAccount(userAddress);
 
   // Build the transaction (do not sign)
@@ -222,4 +225,23 @@ export const estimateStakeFee = async (userAddress, amount) => {
   const feeXLM = feeStroops / 1e7; // 1 XLM = 10^7 stroops
 
   return { feeStroops, feeXLM };
+};
+
+// Classic Stellar (Horizon) operations
+export const getAccountInfo = async (publicKey) => {
+  const server = new HorizonServer(HORIZON_URL);
+  return await server.loadAccount(publicKey);
+};
+
+// Soroban contract call (generic)
+export const callSorobanContract = async (contractId, method, args = []) => {
+  const server = new SorobanServer(SOROBAN_RPC);
+  const contract = new Contract(contractId);
+  const result = await contract.call(
+    server,
+    method,
+    args,
+    { networkPassphrase: NETWORK_PASSPHRASE }
+  );
+  return scValToNative(result);
 }; 

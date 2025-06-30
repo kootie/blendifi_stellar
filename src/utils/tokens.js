@@ -10,7 +10,7 @@ export const TOKENS = {
   XLM: {
     symbol: 'XLM',
     name: 'Stellar Lumens',
-    address: 'CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC',
+    type: 'native', // No contract address for native XLM
     decimals: 7,
     icon: '⭐'
   },
@@ -37,9 +37,10 @@ export const TOKENS = {
   }
 };
 
-import { getAssetPrice, RPC_URL } from './contract';
+import { getAssetPrice, SOROBAN_RPC } from './contract';
 import * as SorobanClient from 'soroban-client';
-import * as StellarSdk from 'stellar-sdk';
+import { Server } from 'stellar-sdk';
+import { checkFreighter } from './checkFreighter';
 
 const HORIZON_URL = 'https://horizon-testnet.stellar.org'; // Change to mainnet if needed
 
@@ -56,33 +57,57 @@ export const getTokenPrice = async (symbol) => {
 
 export const getTokenBalance = async (address, tokenSymbol) => {
   const token = TOKENS[tokenSymbol];
-  if (!token || !address) return 0;
+  if (!token || !address) {
+    console.warn('getTokenBalance: Missing token or address', { address, tokenSymbol });
+    return 0;
+  }
 
   // If XLM, fetch native balance from Horizon
   if (tokenSymbol === 'XLM') {
     try {
-      const server = new StellarSdk.Server(HORIZON_URL);
+      const freighterOk = await checkFreighter();
+      if (!freighterOk) throw new Error('Freighter not available');
+      console.log('Fetching XLM balance from Horizon', { address, HORIZON_URL });
+      const server = new Server(HORIZON_URL);
       const account = await server.loadAccount(address);
       const xlmBalance = account.balances.find(b => b.asset_type === 'native');
       const value = xlmBalance ? parseFloat(xlmBalance.balance) : 0;
+      console.log('XLM balance result', { value, xlmBalance });
       return Number.isFinite(value) ? value : 0;
     } catch (e) {
-      console.error('Error fetching XLM balance:', e);
+      console.error('Error fetching XLM balance:', e, { address, HORIZON_URL });
       return 0;
     }
   }
 
   // For contract tokens (BLEND, USDC, etc.)
   try {
+    console.log('Fetching contract token balance', { address, tokenSymbol, contractAddress: token.address, SOROBAN_RPC });
     const contract = new SorobanClient.Contract(token.address);
-    const result = await contract.call('balance', { user: address });
-    // Convert from smallest unit (u128) to float (using token.decimals)
+    const server = new SorobanClient.Server(SOROBAN_RPC, { allowHttp: true });
+    const result = await contract.call(
+      server,
+      'balance',
+      [tokenSymbol === 'XLM' ? undefined : address],
+      { networkPassphrase: 'Test SDF Network ; September 2015' }
+    );
     const decimals = token.decimals || 7;
     const value = Number(result) / Math.pow(10, decimals);
+    console.log('Contract token balance result', { value, result });
     return Number.isFinite(value) ? value : 0;
   } catch (e) {
-    console.error(`Error fetching ${tokenSymbol} balance:`, e);
+    console.error(`Error fetching ${tokenSymbol} balance:`, e, { address, contractAddress: token.address, SOROBAN_RPC });
     return 0;
+  }
+};
+
+// Debugging repeated stake attempts
+let stakeAttemptCount = 0;
+export const debugStakeAttempt = (data) => {
+  stakeAttemptCount++;
+  console.log(`🔍 DEBUG Stake Attempt #${stakeAttemptCount}:`, data);
+  if (stakeAttemptCount > 10) {
+    console.warn('Too many stake attempts - check for infinite loops');
   }
 };
 

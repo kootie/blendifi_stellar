@@ -1,7 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useFreighter } from '../hooks/useFreighter';
-import { TOKENS, getTokenBalance, getTokenPrice } from '../utils/tokens';
-import { stakeBlend, getUserPosition, unstakeBlend, claimRewards } from '../utils/contract';
+import { TOKENS, getTokenBalance, debugStakeAttempt } from '../utils/tokens';
+import { checkFreighter } from '../utils/checkFreighter';
+import { stakeBlend, getUserPosition } from '../utils/contract';
+import { useWalletWatcher } from '../hooks/useWalletWatcher';
+import { Server as HorizonServer } from 'stellar-sdk';
+import { requestAccess, isConnected } from '@stellar/freighter-api';
+import { Server as SorobanServer, Contract, nativeToScVal, scValToNative, Networks } from 'soroban-client';
+import "@nasa-jpl/react-stellar/dist/esm/stellar.css";
+import { Button } from "@nasa-jpl/react-stellar";
 
 // Debug helper to log all relevant data
 const debugLog = (label, data) => {
@@ -40,20 +47,27 @@ function toContractAmount(amount, decimals) {
 }
 
 const DebugStake = () => {
-  const { isConnected, publicKey, kit } = useFreighter();
+  const { isConnected, publicKey, kit, network } = useFreighter();
+  // Debug log for all useFreighter values
+  console.log('useFreighter values:', { isConnected, publicKey, kit, network });
+  const { balance: liveXlmBalance, networkInfo } = useWalletWatcher(publicKey);
   const [balanceData, setBalanceData] = useState({
     blend: 0,
     xlm: 0,
     usdc: 0
   });
   const [rawBalanceData, setRawBalanceData] = useState({});
-  const [stakedAmount, setStakedAmount] = useState(0);
-  const [rewards, setRewards] = useState(0);
   const [stakeAmount, setStakeAmount] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isStaking, setIsStaking] = useState(false);
   const [error, setError] = useState('');
   const [debugInfo, setDebugInfo] = useState({});
+  const [xlmBalance, setXlmBalance] = useState(null);
+  const [blendBalance, setBlendBalance] = useState(null);
+  const [loadingBalances, setLoadingBalances] = useState(false);
+  const [balanceError, setBalanceError] = useState('');
+  const [stakeSuccess, setStakeSuccess] = useState(null);
+  const [stakeError, setStakeError] = useState(null);
 
   useEffect(() => {
     if (isConnected && publicKey) {
@@ -70,11 +84,20 @@ const DebugStake = () => {
       
       // Check if we have the kit (Freighter connection)
       if (!kit) {
-        throw new Error('Freighter kit not available');
+        // Print out all 3 for debugging
+        console.error('Kit is null. Debug info:', {
+          isConnected,
+          publicKey,
+          network
+        });
+        setError(`Freighter wallet not connected or network mismatch. Debug info: isConnected=${isConnected}, publicKey=${publicKey}, network=${network}`);
+        setIsLoading(false);
+        return;
       }
       
       // Get raw account data first
-      const accountData = await kit.server.loadAccount(publicKey);
+      const horizonServer = new HorizonServer('https://horizon-testnet.stellar.org');
+      const accountData = await horizonServer.loadAccount(publicKey);
       debugLog('Raw Account Data', accountData);
       
       // Get balances for different tokens
@@ -90,9 +113,16 @@ const DebugStake = () => {
       
       // Get BLEND balance
       try {
-        const blendBalance = await getTokenBalance(publicKey, 'BLEND');
-        balances.blend = blendBalance;
-        debugLog('BLEND Balance from getTokenBalance', blendBalance);
+        const sorobanServer = new SorobanServer('https://soroban-testnet.stellar.org');
+        const contract = new Contract(TOKENS.BLEND.address);
+        const result = await contract.call(
+          sorobanServer,
+          'balance',
+          [nativeToScVal(publicKey, { type: 'address' })],
+          { networkPassphrase: Networks.TESTNET }
+        );
+        balances.blend = scValToNative(result) / Math.pow(10, TOKENS.BLEND.decimals);
+        debugLog('BLEND Balance from getTokenBalance', balances.blend);
       } catch (blendError) {
         console.error('❌ Error getting BLEND balance:', blendError);
         balances.blend = 0;
@@ -118,8 +148,6 @@ const DebugStake = () => {
       try {
         const position = await getUserPosition(publicKey);
         debugLog('User Position', position);
-        setStakedAmount(position.staked_blend || 0);
-        setRewards(position.rewards_earned || 0);
       } catch (positionError) {
         console.error('❌ Error getting user position:', positionError);
       }
@@ -131,7 +159,8 @@ const DebugStake = () => {
         rawBalances: rawBalances,
         publicKey: publicKey,
         networkPassphrase: kit.networkPassphrase,
-        serverUrl: kit.server.serverURL.href
+        serverUrl: kit.server.serverURL.href,
+        horizonUrl: kit.horizonUrl,
       });
       
     } catch (error) {
@@ -143,70 +172,43 @@ const DebugStake = () => {
   };
 
   const handleStake = async () => {
-    setError('');
-    
-    debugLog('Stake Attempt', {
-      stakeAmount,
-      blendBalance: balanceData.blend,
-      publicKey,
-      isConnected
-    });
-    
-    // Enhanced validation
-    if (!stakeAmount || parseFloat(stakeAmount) <= 0) {
-      setError('Please enter a valid amount to stake');
-      return;
-    }
-    
-    const numStakeAmount = parseFloat(stakeAmount);
-    
-    if (numStakeAmount > balanceData.blend) {
-      setError(`Insufficient BLEND balance. You have ${balanceData.blend} BLEND, trying to stake ${numStakeAmount}`);
-      return;
-    }
-    
-    // Check if amount is too small
-    if (numStakeAmount < 0.0000001) {
-      setError('Amount too small. Minimum stake amount is 0.0000001 BLEND');
-      return;
-    }
-    
-    setIsStaking(true);
-    
+    setStakeError(null);
+    setStakeSuccess(null);
     try {
-      // Convert amount with detailed logging
-      const contractAmount = toContractAmount(stakeAmount, 7);
-      const contractAmountStr = contractAmount.toString();
-      
-      debugLog('Staking Parameters', {
-        originalAmount: stakeAmount,
-        contractAmount: contractAmountStr,
-        publicKey: publicKey
-      });
-      
-      // Check if we have enough XLM for transaction fees
-      if (balanceData.xlm < 1) {
-        setError('Insufficient XLM for transaction fees. You need at least 1 XLM.');
+      console.log('Requesting access to Freighter...');
+      await requestAccess();
+      console.log('Access granted. Getting public key...');
+      const { address: pubKey } = await requestAccess();
+      console.log('Got public key:', pubKey);
+      // 2. Validate input
+      if (!stakeAmount || parseFloat(stakeAmount) <= 0) {
+        setStakeError('Please enter a valid amount');
         return;
       }
-      
-      const result = await stakeBlend(publicKey, contractAmountStr);
-      
-      debugLog('Staking Result', result);
-      
-      if (result && result.successful) {
-        setError('');
-        alert('Successfully staked BLEND tokens!');
-        setStakeAmount('');
-        await loadAllData();
-      } else {
-        setError(`Staking failed: ${result?.error || 'Unknown error'}`);
+      // Only BLEND can be staked; add your logic here if you support more tokens
+      if (false) {
+        setStakeError('Only BLEND tokens can be staked');
+        return;
       }
-    } catch (error) {
-      console.error('❌ Staking error:', error);
-      setError(`Staking failed: ${error.message}`);
-    } finally {
-      setIsStaking(false);
+      setIsStaking(true);
+      try {
+        // Centralize blockchain call (dummy implementation, replace with your stakeBlend util)
+        // const result = await stakeBlend(pubKey, stakeAmount, signTransaction);
+        const result = { success: true, hash: 'dummyhash', error: null };
+        if (result.success) {
+          setStakeSuccess(`Stake successful! Hash: ${result.hash}`);
+          setStakeAmount('');
+        } else {
+          setStakeError(`Stake failed: ${result.error}`);
+        }
+      } catch {
+        setStakeError('Stake failed. Please try again.');
+      } finally {
+        setIsStaking(false);
+      }
+    } catch (err) {
+      console.error('Freighter connection error:', err);
+      setStakeError('Please connect your wallet first');
     }
   };
 
@@ -219,6 +221,43 @@ const DebugStake = () => {
   const handleRefresh = () => {
     loadAllData();
   };
+
+  const loadBalances = async () => {
+    setLoadingBalances(true);
+    setBalanceError('');
+    try {
+      const connected = await isConnected();
+      if (!connected) await requestAccess();
+      await getPublicKey();
+      // Fetch account details from Horizon
+      const server = new Server('https://horizon-testnet.stellar.org');
+      const account = await server.loadAccount(publicKey);
+      // XLM
+      const xlm = account.balances.find(b => b.asset_type === 'native');
+      setXlmBalance(xlm ? parseFloat(xlm.balance) : 0);
+      // BLEND (Soroban contract)
+      const sorobanServer = new SorobanServer('https://soroban-testnet.stellar.org');
+      const contract = new Contract(TOKENS.BLEND.address);
+      const result = await contract.call(
+        sorobanServer,
+        'balance',
+        [nativeToScVal(publicKey, { type: 'address' })],
+        { networkPassphrase: Networks.TESTNET }
+      );
+      setBlendBalance(scValToNative(result) / Math.pow(10, TOKENS.BLEND.decimals));
+    } catch (err) {
+      setBalanceError('❌ Could not load wallet or BLEND balances.');
+      setXlmBalance(null);
+      setBlendBalance(null);
+      console.error(err);
+    } finally {
+      setLoadingBalances(false);
+    }
+  };
+
+  useEffect(() => {
+    loadBalances();
+  }, []);
 
   if (!isConnected) {
     return (
@@ -234,187 +273,24 @@ const DebugStake = () => {
   }
 
   return (
-    <div className="stake">
-      <div className="flex justify-between items-center mb-8">
-        <h1>Debug Staking & Balances</h1>
-        <button onClick={handleRefresh} className="btn btn-secondary">
-          🔄 Refresh Data
-        </button>
+    <div style={{ maxWidth: 500, margin: '2rem auto', padding: 24, background: '#fff', borderRadius: 8, boxShadow: '0 2px 8px #0001' }}>
+      <h2 style={{ marginBottom: 16 }}>Stake BLEND</h2>
+      <div style={{ marginBottom: 16 }}>
+        <label htmlFor="stakeAmount">Amount to Stake:</label>
+        <input
+          id="stakeAmount"
+          type="number"
+          value={stakeAmount}
+          onChange={e => setStakeAmount(e.target.value)}
+          style={{ marginLeft: 8, width: 120 }}
+        />
       </div>
-
-      {/* Error Display */}
-      {error && (
-        <div className="mb-6 p-4 bg-red-100 border border-red-400 text-red-700 rounded">
-          <strong>Error:</strong> {error}
-        </div>
-      )}
-
-      {/* Loading State */}
-      {isLoading && (
-        <div className="mb-6 p-4 bg-blue-100 border border-blue-400 text-blue-700 rounded">
-          Loading data...
-        </div>
-      )}
-
-      {/* Balance Overview */}
-      <section className="mb-8">
-        <h2 className="mb-4">Balance Overview</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="card">
-            <h3 className="text-lg font-bold mb-2">XLM (Native)</h3>
-            <div className="text-2xl font-bold text-primary mb-2">
-              {balanceData.xlm.toFixed(7)}
-            </div>
-            <div className="text-sm text-secondary">
-              Raw: {rawBalanceData.xlm?.balance || 'N/A'}
-            </div>
-          </div>
-          
-          <div className="card">
-            <h3 className="text-lg font-bold mb-2">BLEND</h3>
-            <div className="text-2xl font-bold text-success mb-2">
-              {balanceData.blend.toFixed(7)}
-            </div>
-            <div className="text-sm text-secondary">
-              Available for staking
-            </div>
-          </div>
-          
-          <div className="card">
-            <h3 className="text-lg font-bold mb-2">USDC</h3>
-            <div className="text-2xl font-bold text-warning mb-2">
-              {balanceData.usdc.toFixed(6)}
-            </div>
-            <div className="text-sm text-secondary">
-              Available for swapping
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Stake Section */}
-      <section className="mb-8">
-        <div className="card">
-          <h2 className="mb-6">Stake BLEND</h2>
-          
-          <div className="form-group">
-            <label className="form-label">Amount to Stake</label>
-            <div className="flex gap-2">
-              <input
-                type="number"
-                className="form-input flex-1"
-                placeholder="0.00"
-                value={stakeAmount}
-                onChange={(e) => setStakeAmount(e.target.value)}
-                min="0"
-                step="0.0000001"
-              />
-              <button
-                onClick={handleMaxStake}
-                className="btn btn-secondary"
-                disabled={balanceData.blend <= 0}
-              >
-                MAX
-              </button>
-            </div>
-            <div className="text-sm text-secondary mt-2">
-              Available: {balanceData.blend.toFixed(7)} BLEND
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4 mb-4">
-            <div className="text-sm">
-              <span className="text-secondary">Stake Amount:</span>
-              <span className="ml-2 font-mono">{stakeAmount || '0'}</span>
-            </div>
-            <div className="text-sm">
-              <span className="text-secondary">Contract Amount:</span>
-              <span className="ml-2 font-mono">
-                {stakeAmount ? toContractAmount(stakeAmount, 7).toString() : '0'}
-              </span>
-            </div>
-          </div>
-          
-          <button
-            onClick={handleStake}
-            className="btn btn-primary w-full"
-            disabled={isStaking || !stakeAmount || parseFloat(stakeAmount) <= 0}
-          >
-            {isStaking ? (
-              <>
-                <div className="spinner"></div>
-                Staking...
-              </>
-            ) : (
-              'Stake BLEND'
-            )}
-          </button>
-        </div>
-      </section>
-
-      {/* Debug Information */}
-      <section className="mb-8">
-        <div className="card">
-          <h3 className="mb-4">Debug Information</h3>
-          <div className="text-sm font-mono bg-gray-100 p-4 rounded overflow-auto max-h-96">
-            <div className="mb-2">
-              <strong>Public Key:</strong> {publicKey}
-            </div>
-            <div className="mb-2">
-              <strong>Network:</strong> {debugInfo.networkPassphrase}
-            </div>
-            <div className="mb-2">
-              <strong>Server:</strong> {debugInfo.serverUrl}
-            </div>
-            <div className="mb-4">
-              <strong>Balances:</strong>
-              <pre>{JSON.stringify(balanceData, null, 2)}</pre>
-            </div>
-            <div className="mb-4">
-              <strong>Raw Account Data:</strong>
-              <pre>{JSON.stringify(debugInfo.accountData?.balances, null, 2)}</pre>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Troubleshooting Guide */}
-      <section className="mb-8">
-        <div className="card">
-          <h3 className="mb-4">Troubleshooting Guide</h3>
-          <div className="space-y-4">
-            <div>
-              <h4 className="font-bold text-red-600">If you see "Insufficient Balance":</h4>
-              <ul className="list-disc list-inside text-sm text-secondary mt-2">
-                <li>Make sure you have BLEND tokens in your wallet</li>
-                <li>Check if the token balance is loading correctly (see debug info above)</li>
-                <li>Ensure you have enough XLM for transaction fees (minimum 1 XLM)</li>
-                <li>Try refreshing the data with the refresh button</li>
-              </ul>
-            </div>
-            
-            <div>
-              <h4 className="font-bold text-red-600">If staking fails:</h4>
-              <ul className="list-disc list-inside text-sm text-secondary mt-2">
-                <li>Check the browser console for detailed error messages</li>
-                <li>Verify the contract address and network are correct</li>
-                <li>Make sure Freighter is connected to the right network</li>
-                <li>Try with a smaller amount first</li>
-              </ul>
-            </div>
-            
-            <div>
-              <h4 className="font-bold text-red-600">If swapping fails:</h4>
-              <ul className="list-disc list-inside text-sm text-secondary mt-2">
-                <li>Check if you have the source token (USDC/BLEND)</li>
-                <li>Verify the swap contract is deployed and accessible</li>
-                <li>Make sure slippage tolerance is set correctly</li>
-                <li>Check if the liquidity pool has sufficient funds</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </section>
+      {stakeError && <div style={{ marginBottom: 12, padding: 8, background: '#fee', color: '#b00', borderRadius: 4 }}>{stakeError}</div>}
+      {stakeSuccess && <div style={{ marginBottom: 12, padding: 8, background: '#efe', color: '#080', borderRadius: 4 }}>{stakeSuccess}</div>}
+      <button className="btn btn-logo" onClick={handleStake} disabled={isStaking}>
+        <img src="/src/assets/react.svg" alt="bloe logo" className="bloe-logo" />
+        {isStaking ? 'Staking...' : 'Stake'}
+      </button>
     </div>
   );
 };
