@@ -70,7 +70,9 @@ export const getTokenBalance = async (address, tokenSymbol) => {
       console.log('Fetching XLM balance from Horizon', { address, HORIZON_URL });
       const server = new Server(HORIZON_URL);
       const account = await server.loadAccount(address);
+      console.log('Account data:', account);
       const xlmBalance = account.balances.find(b => b.asset_type === 'native');
+      console.log('XLM balance found:', xlmBalance);
       const value = xlmBalance ? parseFloat(xlmBalance.balance) : 0;
       console.log('XLM balance result', { value, xlmBalance });
       return Number.isFinite(value) ? value : 0;

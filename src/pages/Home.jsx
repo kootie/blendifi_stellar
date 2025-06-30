@@ -1,8 +1,11 @@
 import { Link } from 'react-router-dom';
 import { useFreighter } from '../hooks/useFreighter';
+import React, { useState } from 'react';
+import GlassPanel from '../components/GlassPanel';
 
 const Home = () => {
   const { isConnected } = useFreighter();
+  const [showModal, setShowModal] = useState(false);
 
   const features = [
     {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getPublicKey, requestAccess } from "@stellar/freighter-api";
+import { requestAccess } from "@stellar/freighter-api";
 import { getAllBalances } from "../utils/tokens";
 
 export function useWalletBalances() {
@@ -13,19 +13,13 @@ export function useWalletBalances() {
       setLoading(true);
       setError("");
       try {
-        if (!window.freighterApi) {
-          setError("Freighter wallet not found. Please install the Freighter extension.");
-          setLoading(false);
-          return;
-        }
-        await requestAccess();
-        const pubKey = await getPublicKey();
-        setPublicKey(pubKey);
-
-        const allBalances = await getAllBalances(pubKey);
+        // Use only requestAccess and get the address from its return value
+        const { address } = await requestAccess();
+        setPublicKey(address);
+        const allBalances = await getAllBalances(address);
         setBalances(allBalances);
       } catch (err) {
-        setError("Error fetching balances: " + err.message);
+        setError("Freighter wallet not found or not connected. Please ensure the Freighter extension is installed, unlocked, and you have granted access.");
       } finally {
         setLoading(false);
       }

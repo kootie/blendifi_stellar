@@ -112,7 +112,7 @@ const Swap = () => {
         // For now, just simulate success:
         const result = { success: true, hash: 'dummyhash', error: null };
         if (result.success) {
-          setSwapSuccess(`Swap successful! Hash: ${result.hash}`);
+          setSwapSuccess('Swap successful!');
           setAmount('');
         } else {
           setSwapError(`Swap failed: ${result.error}`);
@@ -196,8 +196,8 @@ const Swap = () => {
       </div>
       {swapError && <div style={{ marginBottom: 12, padding: 8, background: '#fee', color: '#b00', borderRadius: 4 }}>{swapError}</div>}
       {swapSuccess && <div style={{ marginBottom: 12, padding: 8, background: '#efe', color: '#080', borderRadius: 4 }}>{swapSuccess}</div>}
-      <button className="btn btn-logo" onClick={handleSwap} disabled={isSwapping}>
-        <img src="/src/assets/react.svg" alt="bloe logo" className="bloe-logo" />
+      <button className="btn btn-logo" onClick={handleSwap} disabled={isSwapping} style={{ background: '#2563EB', boxShadow: '0 2px 8px #3B82F633', padding: '0.75em 2em', fontSize: '1.1rem' }}>
+        <img src="/blendifi (1).jpg" alt="bloe logo" className="bloe-logo" style={{ width: 40, height: 40, objectFit: 'contain', background: '#fff' }} />
         {isSwapping ? 'Swapping...' : 'Swap'}
       </button>
     </div>

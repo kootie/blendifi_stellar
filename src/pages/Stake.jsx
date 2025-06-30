@@ -196,7 +196,7 @@ const DebugStake = () => {
         // const result = await stakeBlend(pubKey, stakeAmount, signTransaction);
         const result = { success: true, hash: 'dummyhash', error: null };
         if (result.success) {
-          setStakeSuccess(`Stake successful! Hash: ${result.hash}`);
+          setStakeSuccess('Stake successful!');
           setStakeAmount('');
         } else {
           setStakeError(`Stake failed: ${result.error}`);
@@ -287,8 +287,8 @@ const DebugStake = () => {
       </div>
       {stakeError && <div style={{ marginBottom: 12, padding: 8, background: '#fee', color: '#b00', borderRadius: 4 }}>{stakeError}</div>}
       {stakeSuccess && <div style={{ marginBottom: 12, padding: 8, background: '#efe', color: '#080', borderRadius: 4 }}>{stakeSuccess}</div>}
-      <button className="btn btn-logo" onClick={handleStake} disabled={isStaking}>
-        <img src="/src/assets/react.svg" alt="bloe logo" className="bloe-logo" />
+      <button className="btn btn-logo" onClick={handleStake} disabled={isStaking} style={{ background: '#2563EB', boxShadow: '0 2px 8px #3B82F633', padding: '0.75em 2em', fontSize: '1.1rem' }}>
+        <img src="/blendifi (1).jpg" alt="bloe logo" className="bloe-logo" style={{ width: 40, height: 40, objectFit: 'contain', background: '#fff' }} />
         {isStaking ? 'Staking...' : 'Stake'}
       </button>
     </div>

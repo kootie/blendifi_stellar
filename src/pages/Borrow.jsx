@@ -90,7 +90,7 @@ const Borrow = () => {
         // const result = await borrowFromBlend(pubKey, borrowToken, borrowAmount, signTransaction);
         const result = { success: true, hash: 'dummyhash', error: null };
         if (result.success) {
-          setBorrowSuccess(`Borrow successful! Hash: ${result.hash}`);
+          setBorrowSuccess('Borrow successful!');
           setBorrowAmount('');
         } else {
           setBorrowError(`Borrow failed: ${result.error}`);
@@ -137,8 +137,8 @@ const Borrow = () => {
       </div>
       {borrowError && <div style={{ marginBottom: 12, padding: 8, background: '#fee', color: '#b00', borderRadius: 4 }}>{borrowError}</div>}
       {borrowSuccess && <div style={{ marginBottom: 12, padding: 8, background: '#efe', color: '#080', borderRadius: 4 }}>{borrowSuccess}</div>}
-      <button className="btn btn-logo" onClick={handleBorrow} disabled={isBorrowing}>
-        <img src="/src/assets/react.svg" alt="bloe logo" className="bloe-logo" />
+      <button className="btn btn-logo" onClick={handleBorrow} disabled={isBorrowing} style={{ background: '#2563EB', boxShadow: '0 2px 8px #3B82F633', padding: '0.75em 2em', fontSize: '1.1rem' }}>
+        <img src="/blendifi (1).jpg" alt="bloe logo" className="bloe-logo" style={{ width: 40, height: 40, objectFit: 'contain', background: '#fff' }} />
         {isBorrowing ? 'Borrowing...' : 'Borrow'}
       </button>
     </div>

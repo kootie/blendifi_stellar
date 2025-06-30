@@ -19,9 +19,9 @@ const Navigation = () => {
 
   return (
     <nav className="nav">
-      <Link to="/" className="logo">
-        <img src="/blendifi2.jpg" alt="Blendifi" className="logo-img" />
-        <span>Blendifi</span>
+      <Link to="/" className="logo" style={{ alignItems: 'center' }}>
+        <img src="/blendifi (1).jpg" alt="Blendifi" className="logo-img" style={{ width: 72, height: 72, objectFit: 'contain', background: '#fff', boxShadow: '0 2px 8px #3B82F633' }} />
+        <span style={{ color: '#2563EB', fontWeight: 800, fontSize: '1.5rem', letterSpacing: '0.01em', marginLeft: 16 }}>Blendifi</span>
       </Link>
       <ul className="nav-links">
         {navItems.map((item) => (
