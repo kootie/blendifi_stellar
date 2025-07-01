@@ -2,7 +2,7 @@ import "@nasa-jpl/react-stellar/dist/esm/stellar.css";
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useFreighter } from '../hooks/useFreighter';
-import { TOKENS, getAllBalances, getTokenPrice } from '../utils/tokens';
+import { TOKENS } from '../utils/tokens';
 import { getUserPosition, getHealthStatus } from '../utils/contract';
 import Profile from '../components/Profile';
 import GlassPanel from '../components/GlassPanel';
@@ -18,51 +18,40 @@ const Dashboard = () => {
 
   useEffect(() => {
     if (isConnected && publicKey) {
-      loadPortfolio();
-      loadContractData();
+      loadAll();
     } else {
       setIsLoading(false);
     }
+    // eslint-disable-next-line
   }, [isConnected, publicKey]);
 
-  const loadPortfolio = async () => {
+  const loadAll = async () => {
     setIsLoading(true);
     try {
-      // Calculate total portfolio value
       let total = 0;
       Object.entries(balances).forEach(([symbol, balance]) => {
-        const price = getTokenPrice(symbol);
+        const price = 1; // Placeholder
         total += balance * price;
       });
       setPortfolioValue(total);
-    } catch (error) {
-      console.error('Error loading portfolio:', error);
+      const position = await getUserPosition(publicKey);
+      setUserPosition(position);
+      const health = await getHealthStatus(publicKey);
+      setHealthStatus(health);
+    } catch {
+      // handle error
     } finally {
       setIsLoading(false);
     }
   };
 
-  const loadContractData = async () => {
-    try {
-      // Get user position from contract
-      const position = await getUserPosition(publicKey);
-      setUserPosition(position);
-      
-      // Get health status from contract
-      const health = await getHealthStatus(publicKey);
-      setHealthStatus(health);
-    } catch (error) {
-      console.error('Error loading contract data:', error);
-    }
-  };
-
   const getHealthStatusText = (status) => {
     switch (status) {
-      case 0: return { text: 'Healthy', class: 'status-success' };
-      case 1: return { text: 'Warning', class: 'status-warning' };
-      case 2: return { text: 'Critical', class: 'status-error' };
-      case 3: return { text: 'Liquidatable', class: 'status-error' };
-      default: return { text: 'Unknown', class: 'status-warning' };
+      case 0: return { text: 'Healthy', class: 'text-success' };
+      case 1: return { text: 'Warning', class: 'text-warning' };
+      case 2: return { text: 'Critical', class: 'text-error' };
+      case 3: return { text: 'Liquidatable', class: 'text-error' };
+      default: return { text: 'Unknown', class: 'text-warning' };
     }
   };
 
@@ -146,14 +135,14 @@ const Dashboard = () => {
     Object.values(userPosition.borrowed_assets).reduce((sum, amount) => sum + amount, 0) : 0;
 
   return (
-    <div style={{ maxWidth: 700, margin: '2rem auto' }}>
+    <div className="max-w-4xl mx-auto py-8 space-y-8">
       <Profile address={publicKey} />
       <GlassPanel style={{ marginBottom: 32 }}>
         <h2 style={{ marginBottom: 16, color: 'var(--primary)' }}>Your Token Balances</h2>
         {loading && <div style={{ color: 'var(--primary)' }}>Loading balances...</div>}
         {error && <div style={{ color: 'var(--error)', marginBottom: 12 }}>{error}</div>}
         <div style={{ display: 'flex', gap: 32, flexWrap: 'wrap' }}>
-          {Object.keys(TOKENS).map(symbol => (
+          {Object.entries(TOKENS).map(([symbol, token]) => (
             <div key={symbol} style={{ minWidth: 120 }}>
               <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{symbol}</div>
               <div style={{ fontFamily: 'monospace', fontSize: '1.2rem' }}>{balances[symbol] !== undefined ? balances[symbol] : '--'}</div>
@@ -168,7 +157,7 @@ const Dashboard = () => {
             <div className="card-header">
               <h2 className="card-title">Portfolio Overview</h2>
               <button
-                onClick={() => { loadPortfolio(); loadContractData(); }}
+                onClick={() => { loadAll(); }}
                 className="btn btn-sm btn-secondary"
                 disabled={isLoading}
               >
@@ -185,18 +174,18 @@ const Dashboard = () => {
               </div>
               <div className="text-center">
                 <div className="text-2xl font-bold text-success mb-2">
-                  ${(rewardsEarned * getTokenPrice('BLEND')).toFixed(2)}
+                  {rewardsEarned.toFixed(4)} BLEND
                 </div>
                 <div className="text-sm text-secondary">Rewards Earned</div>
               </div>
               <div className="text-center">
                 <div className="text-2xl font-bold text-warning mb-2">
-                  ${borrowedValue.toFixed(2)}
+                  {borrowedValue.toFixed(4)}
                 </div>
                 <div className="text-sm text-secondary">Borrowed</div>
               </div>
               <div className="text-center">
-                <div className={`text-2xl font-bold mb-2 ${healthInfo.class.replace('status-', 'text-')}`}>
+                <div className={`text-2xl font-bold mb-2 ${healthInfo.class}`}>
                   {healthInfo.text}
                 </div>
                 <div className="text-sm text-secondary">Health Status</div>
@@ -233,23 +222,20 @@ const Dashboard = () => {
             {/* Token Balances */}
             <h3 className="mb-4">Your Balances</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {Object.entries(balances).map(([symbol, balance]) => {
-                const token = TOKENS[symbol];
-                const price = getTokenPrice(symbol);
-                const value = balance * price;
+              {Object.entries(TOKENS).map(([symbol, token]) => {
+                const price = 1; // Placeholder
+                const value = balances[symbol] * price;
                 
                 return (
                   <div key={symbol} className="token-item">
-                    <div className="token-icon">
-                      {token.icon}
-                    </div>
+                    <div className="token-icon">{token.icon}</div>
                     <div className="token-info">
-                      <div className="token-symbol">{token.symbol}</div>
+                      <div className="token-symbol">{symbol}</div>
                       <div className="token-name">{token.name}</div>
                     </div>
                     <div className="token-balance">
-                      <div className="token-amount">{balance.toFixed(4)}</div>
-                      <div className="token-value">${value.toFixed(2)}</div>
+                      <div className="token-amount">{balances[symbol] !== undefined ? balances[symbol].toFixed(4) : '--'}</div>
+                      <div className="token-value">${value !== undefined && !isNaN(value) ? value.toFixed(2) : '--'}</div>
                     </div>
                   </div>
                 );

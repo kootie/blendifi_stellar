@@ -1,130 +1,76 @@
 import { useState, useEffect } from 'react';
 import { useFreighter } from '../hooks/useFreighter';
-import { TOKENS, getTokenPrice } from '../utils/tokens';
-import { requestAccess } from '@stellar/freighter-api';
-import { Server } from 'stellar-sdk';
-import { Server as SorobanServer, Contract, nativeToScVal, scValToNative, Networks } from 'soroban-client';
-// Add toast import if available
-// import { toast } from 'sonner';
-// Add react-stellar imports
-import "@nasa-jpl/react-stellar/dist/esm/stellar.css";
-import { Button } from "@nasa-jpl/react-stellar";
+import { TOKENS, getTokenBalance } from '../utils/tokens';
+import { swapTokens } from '../utils/contract';
 
 const Swap = () => {
   const { isConnected, publicKey } = useFreighter();
   const [fromToken, setFromToken] = useState('XLM');
   const [toToken, setToToken] = useState('BLEND');
   const [amount, setAmount] = useState('');
-  const [fromBalance, setFromBalance] = useState(null);
-  const [toBalance, setToBalance] = useState(null);
-  const [xlmBalance, setXlmBalance] = useState(null);
+  const [fromBalance, setFromBalance] = useState(0);
+  const [toBalance, setToBalance] = useState(0);
   const [isSwapping, setIsSwapping] = useState(false);
-  const slippage = 0.5; // 0.5% default
-  const [price, setPrice] = useState(1);
+  const [swapError, setSwapError] = useState('');
   const [swapSuccess, setSwapSuccess] = useState(null);
-  const [swapError, setSwapError] = useState(null);
+  const slippage = 0.5; // 0.5% default
+  const price = 1; // Placeholder: 1:1 for MVP
+
+  // Load balances for selected tokens
+  const loadBalances = async () => {
+    if (!isConnected || !publicKey) return;
+    try {
+      const fromBal = await getTokenBalance(publicKey, fromToken);
+      setFromBalance(Number(fromBal) || 0);
+      const toBal = await getTokenBalance(publicKey, toToken);
+      setToBalance(Number(toBal) || 0);
+    } catch {
+      setFromBalance(0);
+      setToBalance(0);
+    }
+  };
 
   useEffect(() => {
-    if (isConnected && publicKey) {
-      loadBalances();
-      updatePrice();
-    }
+    loadBalances();
     // eslint-disable-next-line
   }, [isConnected, publicKey, fromToken, toToken]);
 
-  const loadBalances = async () => {
+  // Handle swap
+  const handleSwap = async () => {
+    setSwapError('');
+    setSwapSuccess(null);
+    if (!amount || parseFloat(amount) <= 0) {
+      setSwapError('Enter a valid amount');
+      return;
+    }
+    if (fromToken === toToken) {
+      setSwapError('Cannot swap the same token');
+      return;
+    }
+    setIsSwapping(true);
     try {
-      const connected = await isConnected();
-      if (!connected) await requestAccess();
-      await getPublicKey();
-      // Fetch account details from Horizon
-      const server = new Server('https://horizon-testnet.stellar.org');
-      const account = await server.loadAccount(publicKey);
-      // XLM
-      const xlm = account.balances.find(b => b.asset_type === 'native');
-      setXlmBalance(xlm ? parseFloat(xlm.balance) : 0);
-      // From token
-      if (fromToken === 'BLEND') {
-        const sorobanServer = new SorobanServer('https://soroban-testnet.stellar.org');
-        const contract = new Contract(TOKENS.BLEND.address);
-        const result = await contract.call(
-          sorobanServer,
-          'balance',
-          [nativeToScVal(publicKey, { type: 'address' })],
-          { networkPassphrase: Networks.TESTNET }
+      const fromDecimals = TOKENS[fromToken].decimals;
+      const toDecimals = TOKENS[toToken].decimals;
+      const amountIn = (parseFloat(amount) * Math.pow(10, fromDecimals)).toString();
+      // Calculate minAmountOut with slippage
+      const minAmountOut = (parseFloat(amount) * price * (1 - slippage / 100) * Math.pow(10, toDecimals)).toString();
+      const deadline = Math.floor(Date.now() / 1000) + 600; // 10 min from now
+      const result = await swapTokens(publicKey, fromToken, toToken, amountIn, minAmountOut, deadline);
+      if (result && result.hash) {
+        setSwapSuccess(
+          <span>
+            Swap successful! <a href={`https://testnet.stellarchain.io/tx/${result.hash}`} target="_blank" rel="noopener noreferrer" className="text-primary underline">View Tx</a>
+          </span>
         );
-        setFromBalance(scValToNative(result) / Math.pow(10, TOKENS.BLEND.decimals));
+        setAmount('');
+        loadBalances();
       } else {
-        const tokenBal = account.balances.find(b => b.asset_code === fromToken);
-        setFromBalance(tokenBal ? parseFloat(tokenBal.balance) : 0);
-      }
-      // To token
-      if (toToken === 'BLEND') {
-        const sorobanServer = new SorobanServer('https://soroban-testnet.stellar.org');
-        const contract = new Contract(TOKENS.BLEND.address);
-        const result = await contract.call(
-          sorobanServer,
-          'balance',
-          [nativeToScVal(publicKey, { type: 'address' })],
-          { networkPassphrase: Networks.TESTNET }
-        );
-        setToBalance(scValToNative(result) / Math.pow(10, TOKENS.BLEND.decimals));
-      } else {
-        const tokenBal = account.balances.find(b => b.asset_code === toToken);
-        setToBalance(tokenBal ? parseFloat(tokenBal.balance) : 0);
+        setSwapError(result?.errorResult || result?.status || 'Unknown error');
       }
     } catch {
-      setXlmBalance(null);
-      setFromBalance(null);
-      setToBalance(null);
-    }
-  };
-
-  const updatePrice = () => {
-    // Simple price ratio for MVP
-    const fromPrice = getTokenPrice(fromToken);
-    const toPrice = getTokenPrice(toToken);
-    setPrice(toPrice / fromPrice);
-  };
-
-  const handleSwap = async () => {
-    setSwapError(null);
-    setSwapSuccess(null);
-    try {
-      console.log('Requesting access to Freighter...');
-      await requestAccess();
-      console.log('Access granted. Getting public key...');
-      const { address: pubKey } = await requestAccess();
-      console.log('Got public key:', pubKey);
-      // 2. Validate input
-      if (!amount || parseFloat(amount) <= 0) {
-        setSwapError('Please enter a valid amount');
-        return;
-      }
-      if (fromToken === toToken) {
-        setSwapError('Cannot swap the same token');
-        return;
-      }
-      setIsSwapping(true);
-      try {
-        // 3. Centralize blockchain call (dummy implementation, replace with your swapTokens util)
-        // const result = await swapTokens(pubKey, fromToken, toToken, amount, minAmountOut, signTransaction);
-        // For now, just simulate success:
-        const result = { success: true, hash: 'dummyhash', error: null };
-        if (result.success) {
-          setSwapSuccess('Swap successful!');
-          setAmount('');
-        } else {
-          setSwapError(`Swap failed: ${result.error}`);
-        }
-      } catch {
-        setSwapError('Swap failed. Please try again.');
-      } finally {
-        setIsSwapping(false);
-      }
-    } catch (err) {
-      console.error('Freighter connection error:', err);
-      setSwapError('Please connect your wallet first');
+      setSwapError('Swap failed. Please try again.');
+    } finally {
+      setIsSwapping(false);
     }
   };
 
@@ -145,61 +91,75 @@ const Swap = () => {
     }
   };
 
+  if (!isConnected) {
+    return (
+      <div className="text-center">
+        <div className="card">
+          <h2 className="mb-4">Connect Your Wallet</h2>
+          <p className="text-secondary mb-6">Please connect your Freighter wallet to continue.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div style={{ maxWidth: 500, margin: '2rem auto', padding: 24, background: '#fff', borderRadius: 8, boxShadow: '0 2px 8px #0001' }}>
-      <h2 style={{ marginBottom: 16 }}>Token Swap</h2>
-      <div style={{ marginBottom: 16 }}>
-        <label htmlFor="fromToken">From Token:</label>
-        <select id="fromToken" value={fromToken} onChange={e => setFromToken(e.target.value)} style={{ marginLeft: 8 }}>
-          {Object.keys(TOKENS).map(symbol => (
-            <option key={symbol} value={symbol}>{symbol}</option>
-          ))}
-        </select>
-        <div className="text-sm text-secondary mt-2">
-          Balance: {fromBalance?.toFixed(4) || 'Loading...'} {fromToken}
+    <div className="max-w-md mx-auto bg-white shadow rounded-2xl p-6 space-y-6">
+      <h2 className="text-xl font-semibold text-gray-800 mb-2">Token Swap</h2>
+      <form className="space-y-4" onSubmit={e => { e.preventDefault(); handleSwap(); }}>
+        <div>
+          <label htmlFor="fromToken" className="form-label">From Token</label>
+          <select id="fromToken" value={fromToken} onChange={handleFromTokenChange} className="form-select w-full mt-1">
+            {Object.keys(TOKENS).map(symbol => (
+              <option key={symbol} value={symbol}>{symbol}</option>
+            ))}
+          </select>
+          <div className="text-sm text-secondary mt-2">
+            Balance: {fromBalance?.toFixed(4)} {fromToken}
+          </div>
         </div>
-      </div>
-      <div style={{ marginBottom: 16 }}>
-        <label htmlFor="toToken">To Token:</label>
-        <select id="toToken" value={toToken} onChange={e => setToToken(e.target.value)} style={{ marginLeft: 8 }}>
-          {Object.keys(TOKENS).map(symbol => (
-            <option key={symbol} value={symbol}>{symbol}</option>
-          ))}
-        </select>
-        <div className="text-sm text-secondary mt-2">
-          Balance: {toBalance?.toFixed(4) || 'Loading...'} {toToken}
+        <div>
+          <label htmlFor="toToken" className="form-label">To Token</label>
+          <select id="toToken" value={toToken} onChange={handleToTokenChange} className="form-select w-full mt-1">
+            {Object.keys(TOKENS).map(symbol => (
+              <option key={symbol} value={symbol}>{symbol}</option>
+            ))}
+          </select>
+          <div className="text-sm text-secondary mt-2">
+            Balance: {toBalance?.toFixed(4)} {toToken}
+          </div>
         </div>
-      </div>
-      <div style={{ marginBottom: 16 }}>
-        <label htmlFor="amount">Amount:</label>
-        <input
-          id="amount"
-          type="number"
-          value={amount}
-          onChange={e => setAmount(e.target.value)}
-          style={{ marginLeft: 8, width: 120 }}
-        />
-      </div>
-      <div className="form-group flex justify-between text-sm mb-2">
-        <span>Price:</span>
-        <span>1 {fromToken} ≈ {price.toFixed(4)} {toToken}</span>
-      </div>
-      <div className="form-group flex justify-between text-sm mb-2">
-        <span>Slippage Tolerance:</span>
-        <span>{slippage}%</span>
-      </div>
-      <div className="form-group flex justify-between text-sm mb-4">
-        <span>Minimum Received:</span>
-        <span>
-          {amount ? (parseFloat(amount) * price * (1 - slippage / 100)).toFixed(4) : '0.0000'} {toToken}
-        </span>
-      </div>
-      {swapError && <div style={{ marginBottom: 12, padding: 8, background: '#fee', color: '#b00', borderRadius: 4 }}>{swapError}</div>}
-      {swapSuccess && <div style={{ marginBottom: 12, padding: 8, background: '#efe', color: '#080', borderRadius: 4 }}>{swapSuccess}</div>}
-      <button className="btn btn-logo" onClick={handleSwap} disabled={isSwapping} style={{ background: '#2563EB', boxShadow: '0 2px 8px #3B82F633', padding: '0.75em 2em', fontSize: '1.1rem' }}>
-        <img src="/blendifi (1).jpg" alt="bloe logo" className="bloe-logo" style={{ width: 40, height: 40, objectFit: 'contain', background: '#fff' }} />
-        {isSwapping ? 'Swapping...' : 'Swap'}
-      </button>
+        <div>
+          <label htmlFor="amount" className="form-label">Amount</label>
+          <input
+            id="amount"
+            type="number"
+            value={amount}
+            onChange={e => setAmount(e.target.value)}
+            className="form-input w-full"
+            placeholder="0.0"
+            min="0"
+          />
+        </div>
+        <div className="flex justify-between text-sm mb-2">
+          <span>Price:</span>
+          <span>1 {fromToken} ≈ {price.toFixed(4)} {toToken}</span>
+        </div>
+        <div className="flex justify-between text-sm mb-2">
+          <span>Slippage Tolerance:</span>
+          <span>{slippage}%</span>
+        </div>
+        <div className="flex justify-between text-sm mb-4">
+          <span>Minimum Received:</span>
+          <span>
+            {amount ? (parseFloat(amount) * price * (1 - slippage / 100)).toFixed(4) : '0.0000'} {toToken}
+          </span>
+        </div>
+        {swapError && <div className="bg-error/10 text-error rounded p-2 text-sm">{swapError}</div>}
+        {swapSuccess && <div className="bg-success/10 text-success rounded p-2 text-sm">{swapSuccess}</div>}
+        <button type="submit" className="btn btn-logo" disabled={isSwapping}>
+          {isSwapping ? 'Swapping...' : 'Swap'}
+        </button>
+      </form>
     </div>
   );
 };

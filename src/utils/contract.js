@@ -88,16 +88,29 @@ export async function borrowAsset(asset, amount, collateralToken, collateralAmou
 }
 
 // Get user position from contract
-export async function getUserPosition() {
-  // TODO: Replace with real contract call using Soroban simulation or RPC
-  // For now, return mock data to prevent errors
-  return {
-    supplied_assets: {},
-    borrowed_assets: {},
-    staked_blend: 0,
-    rewards_earned: 0,
-    health_factor: 1000000000000000000 // 1.0 in wei
-  };
+export async function getUserPosition(userAddress) {
+  try {
+    const server = new SorobanServer(SOROBAN_RPC);
+    const contract = new Contract(CONTRACT_ADDRESS);
+    // Call the contract's get_user_position method
+    const result = await contract.call(
+      server,
+      'get_user_position',
+      [userAddress],
+      { networkPassphrase: NETWORK_PASSPHRASE }
+    );
+    // Assume result is an object with staked_blend and rewards_earned fields (adjust if needed)
+    return scValToNative(result);
+  } catch (error) {
+    console.error('Error fetching user position:', error);
+    return {
+      supplied_assets: {},
+      borrowed_assets: {},
+      staked_blend: 0,
+      rewards_earned: 0,
+      health_factor: 1000000000000000000
+    };
+  }
 }
 
 // Get health status from contract
